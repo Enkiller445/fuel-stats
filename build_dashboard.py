@@ -25,6 +25,7 @@ except Exception:
 
 FUELS = ["АИ-92", "АИ-95", "АИ-98", "АИ-100", "ДТ"]
 FUEL_TO_GRADE = {"АИ-92": "92", "АИ-95": "95", "АИ-98": "98", "АИ-100": "100", "ДТ": "ДТ"}
+NET_COLORS = {"Роснефть": "--f92", "Газпромнефть": "--f100", "Лукойл": "--fdt"}
 
 
 def _cfg(base):
@@ -208,12 +209,39 @@ def _fuel_card(f, hist, cur, drows):
 
 # --------------------------------------------------------- availability ---
 def _availability_chart(cfg, hist, drows, dlabels):
-    chart = viz.line_chart("availidx", dlabels,
-        [{"name": "Индекс доступности", "var": viz.ST_GOOD, "points": analytics.col(drows, "avail_idx")}],
-        unit=" %", area=True, end_labels=False)
-    return (f'<div class="sec">Доступность топлива</div>'
-            f'<section class="card"><h2>Индекс доступности, % <span class="hint">'
-            f'оба источника вместе · по дням</span>{viz.help_badge("Среднее двух показателей: доля АЗС с «есть» (gdebenz) и доля работающих АЗС (petrolplus). Выше — легче заправиться.", _v_avail_index(hist))}</h2>{chart}</section>')
+    ma_n = cfg.get("ma_days", 3)
+    idx = analytics.col(drows, "avail_idx")
+    idx_chart = viz.line_chart("availidx", dlabels, [
+        {"name": "Индекс", "var": viz.ST_GOOD, "points": idx},
+        {"name": f"{ma_n}-дн. среднее", "var": "--f95", "points": analytics.moving_avg(idx, ma_n)},
+    ], unit=" %", end_labels=False)
+    src_chart = viz.line_chart("availsrc", dlabels, [
+        {"name": "gdebenz «есть»", "var": "--f95", "points": analytics.col(drows, "avail_gd")},
+        {"name": "petrolplus «транзакции»", "var": "--f92", "points": analytics.col(drows, "avail_pp")},
+    ], unit=" %", end_labels=False)
+    status_chart = viz.line_chart("gbstatus", dlabels, [
+        {"name": "Есть", "var": viz.ST_GOOD, "points": analytics.col(drows, "gb_yes")},
+        {"name": "Нет", "var": viz.ST_CRIT, "points": analytics.col(drows, "gb_no")},
+        {"name": "Очередь", "var": viz.ST_SERIOUS, "points": analytics.col(drows, "gb_queue")},
+        {"name": "Мало", "var": viz.ST_WARN, "points": analytics.col(drows, "gb_low")},
+    ], y_int=True, end_labels=False)
+    fuel_avail = viz.line_chart("availfuel", dlabels,
+        [{"name": f, "var": viz.FUEL_VAR[f], "points": analytics.col(drows, f"gb_now_{FUEL_TO_GRADE[f]}")}
+         for f in FUELS], y_int=True, end_labels=False)
+    return f"""
+    <div class="sec">Доступность топлива</div>
+    <section class="grid2">
+      <div class="card"><h2>Индекс доступности, % <span class="hint">оба источника вместе + {ma_n}-дн. среднее</span>{viz.help_badge("Единый индекс = среднее двух: доля АЗС с «есть» (gdebenz) и доля работающих АЗС (petrolplus). Линия среднего сглаживает суточный шум.", _v_avail_index(hist))}</h2>
+        {viz.legend([("Индекс", viz.ST_GOOD), (f"{ma_n}-дн. среднее", "--f95")])}{idx_chart}</div>
+      <div class="card"><h2>Источники доступности, % <span class="hint">каждый по отдельности</span>{viz.help_badge("Два исходных показателя, из которых считается индекс: наличие по gdebenz и транзакции по petrolplus. Обычно идут рядом.", _v_avail_index(hist))}</h2>
+        {viz.legend([("gdebenz «есть»", "--f95"), ("petrolplus «транзакции»", "--f92")])}{src_chart}</div>
+    </section>
+    <section class="grid2">
+      <div class="card"><h2>Статусы АЗС <span class="hint">gdebenz · по дням</span>{viz.help_badge("Сколько АЗС в статусах есть/нет/очередь/мало по gdebenz (краудсорс).", _v_avail_index(hist))}</h2>
+        {viz.legend([("Есть", viz.ST_GOOD, "rect"), ("Нет", viz.ST_CRIT, "rect"), ("Очередь", viz.ST_SERIOUS, "rect"), ("Мало", viz.ST_WARN, "rect")])}{status_chart}</div>
+      <div class="card"><h2>Наличие по видам, АЗС <span class="hint">gdebenz · по дням</span>{viz.help_badge("Число АЗС, где марка есть сейчас (gdebenz). Видно, какой вид просаживается первым.", _v_fuel_avail(hist))}</h2>
+        {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{fuel_avail}</div>
+    </section>"""
 
 
 # ---------------------------------------------------------------- prices ---
@@ -236,18 +264,27 @@ def _event_annotations(events, days):
 
 def _price_charts(cfg, hist, days, drows, dlabels, all_events):
     anns = _event_annotations(all_events, days)
-    net = viz.line_chart("pxnet", dlabels, [
+    price_daily = viz.line_chart("pxday", dlabels,
+        [{"name": f, "var": viz.FUEL_VAR[f], "points": analytics.col(drows, f"p_med_{f}")} for f in FUELS],
+        unit=" ₽", annotations=anns, end_labels=False)
+    net_series = [
         {"name": "Независимые", "var": viz.ST_CRIT, "points": analytics.col(drows, "indep95_med")},
         {"name": "Сети", "var": "--f95", "points": analytics.col(drows, "net95_med")},
-    ], unit=" ₽", annotations=anns, end_labels=False)
+    ]
+    for nw in cfg.get("tracked_networks", []):
+        net_series.append({"name": nw, "var": NET_COLORS.get(nw, "--f98"),
+                           "points": analytics.col(drows, f"net95_{nw}")})
+    net = viz.line_chart("pxnet", dlabels, net_series, unit=" ₽", end_labels=False)
     spread = viz.line_chart("spread", dlabels,
         [{"name": "Спред", "var": viz.ST_SERIOUS, "points": analytics.col(drows, "spread95")}],
         unit=" ₽", area=True, end_labels=False)
     return f"""
-    <div class="sec">Цены · сигнал дефицита</div>
+    <div class="sec">Цены · динамика и сигнал дефицита</div>
+    <section class="card"><h2>Медианная цена по видам <span class="hint">по дням · ₽ · наведите для значений</span>{viz.help_badge("Медианная цена каждого вида по дням (замер около заданного часа — без внутрисуточного шума). ◆ — событие из ленты.", _v_price95(hist))}</h2>
+      {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{price_daily}</section>
     <section class="grid2">
-      <div class="card"><h2>АИ-95: независимые vs сети <span class="hint">₽ · по дням</span>{viz.help_badge("Независимые АЗС (вне крупных ВИНК) поднимают цены раньше сетей — их отрыв сигналит о дефиците. ◆ — событие.", _v_spread(hist))}</h2>
-        {viz.legend([("Независимые", viz.ST_CRIT), ("Сети", "--f95")])}{net}</div>
+      <div class="card"><h2>АИ-95: независимые vs сети <span class="hint">₽ · по дням</span>{viz.help_badge("Независимые АЗС (вне ВИНК) поднимают цены раньше сетей — их отрыв сигналит о дефиците. Показаны независимые, сети и отслеживаемые сети.", _v_spread(hist))}</h2>
+        {viz.legend([("Независимые", viz.ST_CRIT), ("Сети", "--f95")] + [(nw, NET_COLORS.get(nw, "--f98")) for nw in cfg.get("tracked_networks", [])])}{net}</div>
       <div class="card"><h2>Насколько независимые дороже <span class="hint">спред, ₽ · по дням</span>{viz.help_badge("Разница медиан: независимые минус сети. Растёт — дефицит усиливается.", _v_spread(hist))}</h2>
         {spread}</div>
     </section>"""
@@ -260,14 +297,14 @@ def _timing_charts(hist, drows):
     best_txt = (f"Больше всего наличия около <b>{max(have, key=lambda h: hour_avg[h]):02d}:00</b> МСК"
                 if len(have) >= 6 else "Копим почасовые данные…")
     hour_bars = viz.bar_chart([str(h) for h in range(24)], hour_avg, var=viz.ST_GOOD, highlight="max")
-    wd = analytics.by_weekday(drows, "gb_queue")
-    wd_bars = viz.bar_chart(analytics.WEEKDAYS, wd, var=viz.ST_SERIOUS, highlight="max", unit=" АЗС")
+    wd = analytics.by_weekday(drows, "avail_idx")
+    wd_bars = viz.bar_chart(analytics.WEEKDAYS, wd, var=viz.ST_GOOD, highlight="max", unit=" %")
     return f"""
     <div class="sec">Когда заправляться</div>
     <section class="grid2">
       <div class="card"><h2>Лучшее время заправки <span class="hint">среднее «есть» по часу</span>{viz.help_badge("Среднее число АЗС с наличием по часу суток за всё время. Зелёный столбец — когда топлива обычно больше.", _v_best_hour(hist))}</h2>
         <div class="stat-row" style="margin:0 0 8px">{best_txt}</div>{hour_bars}</div>
-      <div class="card"><h2>Очереди по дням недели <span class="hint">среднее число АЗС с очередью</span>{viz.help_badge("Среднее число АЗС со статусом «очередь» (gdebenz) по дням недели. Оранжевый столбец — худший день.", _v_queue_wd(drows))}</h2>
+      <div class="card"><h2>Лучший день для заправки <span class="hint">средняя доступность по дням недели</span>{viz.help_badge("Средний индекс доступности по дням недели. Зелёный столбец — день, когда заправиться обычно легче всего.", _v_best_day(drows))}</h2>
         {wd_bars}</div>
     </section>"""
 
@@ -434,13 +471,15 @@ def _v_best_hour(hist):
     return f"Больше всего топлива около {max(have, key=lambda h: avg[h]):02d}:00 МСК — лучшее время."
 
 
-def _v_queue_wd(drows):
-    wd = analytics.by_weekday(drows, "gb_queue")
+def _v_best_day(drows):
+    wd = analytics.by_weekday(drows, "avail_idx")
     have = [i for i in range(7) if wd[i] is not None]
     if len(have) < 3:
         return "Нужно несколько дней — копится."
-    worst = max(have, key=lambda i: wd[i])
-    return f"Больше всего очередей по {analytics.WEEKDAYS[worst]} — планируйте заранее."
+    best = max(have, key=lambda i: wd[i])
+    worst = min(have, key=lambda i: wd[i])
+    return (f"Легче всего заправиться в {analytics.WEEKDAYS[best]}, тяжелее — "
+            f"в {analytics.WEEKDAYS[worst]}.")
 
 
 if __name__ == "__main__":
