@@ -134,6 +134,46 @@ def price_stats(values):
     )
 
 
+def _network_breakdown(azs, cfg, lo, hi, fresh_days, ref, head="АИ-95"):
+    """Медианы цены АИ-95: сети (ВИНК) vs независимые + по отслеживаемым сетям."""
+    majors_l = [m.lower() for m in cfg.get("majors", [])]
+    tracked = cfg.get("tracked_networks", [])
+
+    def pairs_fresh():
+        out = []
+        for r in azs:
+            p = r.get(f"price_{head}")
+            if p is None or not (lo <= p <= hi):
+                continue
+            age = _age_days(r.get(f"date_{head}"), ref)
+            if age is not None and age <= fresh_days:
+                out.append((r.get("brand") or "", p))
+        return out
+
+    pairs = pairs_fresh()
+    if len(pairs) < 5:                                  # мало свежих — все вменяемые
+        pairs = [(r.get("brand") or "", r.get(f"price_{head}")) for r in azs
+                 if r.get(f"price_{head}") is not None and lo <= r.get(f"price_{head}") <= hi]
+
+    def is_major(b):
+        bl = b.lower()
+        return any(m in bl for m in majors_l)
+
+    net_p = [p for b, p in pairs if is_major(b)]
+    indep_p = [p for b, p in pairs if not is_major(b)]
+    med_net = price_stats(net_p)["median"]
+    med_indep = price_stats(indep_p)["median"]
+    out = {"med_net": med_net, "n_net": len(net_p),
+           "med_indep": med_indep, "n_indep": len(indep_p),
+           "spread": (round(med_indep - med_net, 2)
+                      if med_net is not None and med_indep is not None else None),
+           "by": {}}
+    for nw in tracked:
+        nwl = nw.lower()
+        out["by"][nw] = price_stats([p for b, p in pairs if nwl in b.lower()])["median"]
+    return out
+
+
 def collect_prices(cfg):
     """
     Вернёт (summary, stations).
@@ -182,6 +222,9 @@ def collect_prices(cfg):
         st["n_fresh"] = len(freshp)
         st["n_avail"] = len(prices(azs_av, fuel)[0])  # доступные, продающие вид
         summary["fuels"][fuel] = st
+
+    # --- сети vs независимые по АИ-95 (независимые реагируют на дефицит первыми) ---
+    summary["net"] = _network_breakdown(azs, cfg, lo, hi, fresh_days, ref)
 
     # последний снимок станций (компактно, для дашборда)
     stations = []

@@ -123,8 +123,46 @@ def legend(items):
 
 
 # -------------------------------------------------------------- line chart ---
+def bar_chart(labels, values, var="--f95", unit="", height=200, highlight="max"):
+    """Столбцы (день недели / час суток). highlight='max'|'min'|None — какой столбец выделить."""
+    W, H = 860, height
+    padL, padR, padT, padB = 44, 12, 14, 30
+    plotW, plotH = W - padL - padR, H - padT - padB
+    real = [v for v in values if v is not None]
+    if not real:
+        return '<div class="empty">Данные накапливаются</div>'
+    vmax = max(real) * 1.12
+    vmin = min(0, min(real))
+    n = len(values)
+    slot = plotW / n
+    bw = min(26, slot * 0.64)
+    def Y(v):
+        return padT + plotH * (1 - (v - vmin) / (vmax - vmin or 1))
+    hi_i = (values.index(max(real)) if highlight == "max"
+            else values.index(min(real)) if highlight == "min" else -1)
+    P = [f'<svg viewBox="0 0 {W} {H}" class="chart" preserveAspectRatio="xMidYMid meet">']
+    for k in range(4):
+        v = vmin + (vmax - vmin) * k / 3
+        y = Y(v)
+        P.append(f'<line class="grid" x1="{padL}" y1="{y:.1f}" x2="{W-padR}" y2="{y:.1f}"/>')
+        P.append(f'<text class="ylab" x="{padL-6}" y="{y+4:.1f}">{v:.0f}</text>')
+    base = Y(vmin)
+    for i, v in enumerate(values):
+        cx = padL + slot * (i + 0.5)
+        P.append(f'<text class="xlab" x="{cx:.1f}" y="{H-11}">{html.escape(str(labels[i]))}</text>')
+        if v is None:
+            continue
+        y = Y(v)
+        color = var if i == hi_i else "--muted"
+        P.append(f'<rect x="{cx-bw/2:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{max(1,base-y):.1f}" '
+                 f'rx="3" style="fill:var({color})" opacity="{1 if i==hi_i else 0.55}">'
+                 f'<title>{html.escape(str(labels[i]))}: {fmt(v)}{unit}</title></rect>')
+    P.append("</svg>")
+    return f'<div class="chartbox">{"".join(P)}</div>'
+
+
 def line_chart(chart_id, labels, series, unit="", area=False, y_int=False,
-               height=270, end_labels=True):
+               height=270, end_labels=True, annotations=None):
     """
     series: [{'name','var','points':[y|None,...]}]
     Возвращает интерактивный график: сетка, заливка (area), линии, конечные точки/подписи,
@@ -170,6 +208,16 @@ def line_chart(chart_id, labels, series, unit="", area=False, y_int=False,
         anc = "start" if i == 0 else ("end" if i == n - 1 else "middle")
         P.append(f'<text class="xlab" x="{X(i):.1f}" y="{H-12}" '
                  f'style="text-anchor:{anc}">{html.escape(labels[i])}</text>')
+
+    # маркеры событий (вертикальные пунктиры + метка)
+    for ann in (annotations or []):
+        ai = ann.get("i")
+        if ai is None or not (0 <= ai < n):
+            continue
+        ax = X(ai)
+        P.append(f'<line class="evline" x1="{ax:.1f}" y1="{padT}" x2="{ax:.1f}" y2="{padT+plotH}"/>')
+        P.append(f'<text class="evlab" x="{ax+3:.1f}" y="{padT+11}">{html.escape(ann.get("label",""))}'
+                 f'<title>{html.escape(ann.get("full", ann.get("label","")))}</title></text>')
 
     # area (только для одиночной серии) + линии
     for s in series:
@@ -269,6 +317,24 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .t-delta{margin-top:6px}
 .d{font-size:12.5px;font-weight:640} .d.good{color:var(--good)} .d.bad{color:var(--bad)}
 .d.flat{color:var(--muted);font-weight:500}
+.dd{display:inline-flex;gap:10px;font-size:11.5px;color:var(--muted);flex-wrap:wrap}
+.dd .good{color:var(--good);font-weight:640} .dd .bad{color:var(--bad);font-weight:640}
+.chart .evline{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;opacity:.55}
+.chart .evlab{fill:var(--muted);font-size:10px}
+.alert{background:#fdecec;color:#8a1f1f;border:1px solid #f2b8b8;border-radius:14px;
+  padding:12px 16px;margin-bottom:14px;font-size:13.5px;line-height:1.5}
+.alert b{font-weight:700}
+@media (prefers-color-scheme:dark){.alert{background:#3a1414;color:#f2b8b8;border-color:#5a1f1f}}
+.fresh{display:flex;gap:18px;flex-wrap:wrap;align-items:center;font-size:12.5px;
+  color:var(--muted);margin-bottom:10px}
+.fresh .src{display:inline-flex;align-items:center;gap:6px}
+.fresh .dot{width:8px;height:8px;border-radius:50%}
+.stat-row{display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);margin:0 0 16px}
+.stat-row b{color:var(--ink);font-variant-numeric:tabular-nums}
+.events{list-style:none;padding:0;margin:4px 0 0;font-size:13px}
+.events li{padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:10px}
+.events .ed{color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
+.events a{color:var(--f95);text-decoration:none}
 .sub{color:var(--muted);font-size:11.5px;margin-top:6px}
 .hero-num{font-size:52px;font-weight:700;letter-spacing:-.03em;line-height:1}
 .situation{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--surface);

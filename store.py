@@ -24,6 +24,9 @@ def _fieldnames(cfg):
     fn += ["gb_total", "gb_yes", "gb_no", "gb_queue", "gb_low", "gb_unknown"]
     for g in cfg.get("gdebenz_grades", []):
         fn += [f"gb_now_{g}"]
+    fn += ["net95_med", "net95_n", "indep95_med", "indep95_n", "spread95"]
+    for nw in cfg.get("tracked_networks", []):
+        fn += [f"net95_{nw}"]
     return fn
 
 
@@ -42,6 +45,14 @@ def build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary):
             row[f"p_n_{f}"] = d.get("n")
             row[f"p_navail_{f}"] = d.get("n_avail")
             row[f"p_fresh_{f}"] = d.get("n_fresh")
+        net = price_summary.get("net") or {}
+        row["net95_med"] = net.get("med_net")
+        row["net95_n"] = net.get("n_net")
+        row["indep95_med"] = net.get("med_indep")
+        row["indep95_n"] = net.get("n_indep")
+        row["spread95"] = net.get("spread")
+        for nw, med in (net.get("by") or {}).items():
+            row[f"net95_{nw}"] = med
     if gd_summary:
         row["gb_total"] = gd_summary["total"]
         row["gb_yes"] = gd_summary["n_yes"]
