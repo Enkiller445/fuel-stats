@@ -37,6 +37,34 @@ def _i(v):
     return int(v) if v is not None else None
 
 
+# нормализация названий сетей (дубли регистра/языка → единый вид)
+_BRAND_CANON = {
+    "роснефть": "Роснефть", "rosneft": "Роснефть",
+    "лукойл": "Лукойл", "lukoil": "Лукойл",
+    "газпромнефть": "Газпромнефть", "газпром нефть": "Газпромнефть", "gazpromneft": "Газпромнефть",
+    "газпром": "Газпром (газ)", "росгаз": "Росгаз (газ)", "пропан": "Пропан (газ)",
+    "агзс": "АГЗС (газ)", "lpg": "LPG (газ)", "метан": "Метан (газ)",
+    "татнефть": "Татнефть", "tatneft": "Татнефть",
+    "teboil": "Teboil", "тебойл": "Teboil",
+    "нефтьмагистраль": "Нефтьмагистраль", "shell": "Shell", "шелл": "Shell",
+    "трасса": "Трасса", "опти": "Опти", "opti": "Опти", "башнефть": "Башнефть",
+    "тнк": "ТНК", "tnk": "ТНК", "сургутнефтегаз": "Сургутнефтегаз",
+}
+
+
+def _norm_brand(name):
+    if not name or not str(name).strip():
+        return "Без бренда"
+    key = str(name).strip().lower()
+    if key in _BRAND_CANON:
+        return _BRAND_CANON[key]
+    for k, v in _BRAND_CANON.items():           # частичное совпадение (порядок важен)
+        if k in key:
+            return v
+    s = str(name).strip()
+    return s.title() if s.isupper() else s
+
+
 # --- объединённая доступность: gdebenz «есть» + petrolplus «транзакции» ---
 def _av_pcts(r):
     y = analytics._val(r, "gb_yes")
@@ -90,8 +118,11 @@ def build(base_dir, price_stations=None, gd_stations=None):
         _timing_charts(hist, drows),
         (_events_section(events, auto_events) if show_events else ""),
         '<div class="sec">По сетям · последний замер</div>',
-        f'<section class="card"><h2>Цены по сетям <span class="hint">медиана, ₽ · petrolplus</span>{viz.help_badge("Медиана цены по каждой сети и виду. Рядом — число АЗС сети с ценой на вид.", _v_spread(hist))}</h2>{_price_brand_table(price_stations)}</section>',
-        f'<section class="card"><h2>Наличие по сетям <span class="hint">gdebenz</span>{viz.help_badge("По каждой сети: сколько АЗС «есть»/«нет» и на скольких сейчас есть каждый вид (gdebenz, краудсорс).")}</h2>{_gdebenz_brand_table(gd_stations)}</section>',
+        '<div class="stat-row" style="margin:-6px 0 12px"><span>⚠ Две таблицы — про '
+        '<b>разные наборы АЗС</b>: «Цены» из petrolplus, «Наличие» из gdebenz (разные базы). '
+        'Число АЗС у одной сети в них отличается — напрямую не сравнивайте.</span></div>',
+        f'<section class="card"><h2>Цены по сетям <span class="hint">медиана, ₽ · источник petrolplus</span>{viz.help_badge("Медиана цены по каждой сети и виду (petrolplus). Названия сетей нормализованы (дубли регистра/языка сведены), «Без бренда» — АЗС без распознанной сети.", _v_spread(hist))}</h2>{_price_brand_table(price_stations)}</section>',
+        f'<section class="card"><h2>Наличие по сетям <span class="hint">число АЗС «есть» · источник gdebenz</span>{viz.help_badge("По каждой сети: сколько АЗС со статусом «есть» и на скольких сейчас есть каждый вид (gdebenz, краудсорс). Это ДРУГОЙ набор АЗС, чем в «Ценах по сетям».")}</h2>{_gdebenz_brand_table(gd_stations)}</section>',
         _footer(),
     ])
     with open(out_path, "w", encoding="utf-8") as f:
@@ -121,9 +152,11 @@ def _header(cfg, status, hist):
     g_ago, g_c = _ago(gs.get("ts_msk"))
     ndays = analytics.monitoring_days(hist)
     fresh = (f'<div class="fresh">'
-             f'<span class="src"><span class="dot" style="background:var({p_c})"></span>Цены: {html.escape(p_ago)}</span>'
-             f'<span class="src"><span class="dot" style="background:var({g_c})"></span>Наличие: {html.escape(g_ago)}</span>'
-             f'<span>· {ndays} дн наблюдений</span></div>')
+             f'<span class="fbadge" style="border-color:var({p_c})">'
+             f'<span class="dot" style="background:var({p_c})"></span>Цены · petrolplus: <b>{html.escape(p_ago)}</b></span>'
+             f'<span class="fbadge" style="border-color:var({g_c})">'
+             f'<span class="dot" style="background:var({g_c})"></span>Наличие · gdebenz: <b>{html.escape(g_ago)}</b></span>'
+             f'<span class="fdays">{ndays} дн наблюдений</span></div>')
     return (f'<header><h1>Бензин · Москва и область</h1>'
             f'<div class="meta">Обновляется каждый час · {html.escape(cfg.get("region_name",""))}</div>'
             f'</header>{fresh}')
@@ -148,7 +181,7 @@ def _alerts(hist, cfg):
 # -------------------------------------------------------------------- hero ---
 def _hero(hist, cur, drows):
     price_tile = _tile(
-        "Средняя цена АИ-95", viz.fmt(cur("p_med_АИ-95"), " ₽"),
+        "Медиана цены АИ-95", viz.fmt(cur("p_med_АИ-95"), " ₽"),
         viz.sparkline(analytics.col(drows, "p_med_АИ-95"), "--f95", w=120, h=38),
         _dd(hist, "p_med_АИ-95", " ₽", good_down=True),
         viz.help_badge("Медианная цена АИ-95 по всем АЗС в рамке (устойчивее среднего к выбросам).",
@@ -191,14 +224,17 @@ def _fuel_card(f, hist, cur, drows):
     var = viz.FUEL_VAR[f]
     med = cur(f"p_med_{f}")
     n = _i(cur(f"p_n_{f}"))                 # продают этот вид (petrolplus)
+    fresh = _i(cur(f"p_fresh_{f}"))         # свежих цен за медианой
     navail = _i(cur(f"p_navail_{f}"))       # из них с высокой доступностью (работают)
     now = _i(cur(f"gb_now_{g}"))            # gdebenz: краудсорс-подтверждение
     share = viz.pct(navail or 0, n) if n else None   # знаменатель = ПРОДАЮЩИЕ, не все
     spark = viz.sparkline(analytics.col(drows, f"p_med_{f}"), var, w=84, h=30)
+    low = fresh is None or fresh < 15       # разреженная статистика цены
+    badge = ' <span class="ev-auto" title="цена по малому числу свежих АЗС — шумно">мало данных</span>' if low else ""
     return f"""
     <div class="fuelcard" style="--accent:var({var})">
       <div class="fc-head"><span class="fc-dot" style="background:var({var})"></span>
-        <span class="fc-name">{html.escape(f)}</span></div>
+        <span class="fc-name">{html.escape(f)}</span>{badge}</div>
       <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>
       <div class="fc-avail">
         <div class="fc-arow"><span class="lbl">Продают</span><span class="num">{viz.fmt(n)} АЗС</span></div>
@@ -239,7 +275,7 @@ def _availability_chart(cfg, hist, drows, dlabels):
         {viz.legend([("gdebenz «есть»", "--f95"), ("petrolplus «транзакции»", "--f92")])}{src_chart}</div>
     </section>
     <section class="grid2">
-      <div class="card"><h2>Статусы АЗС <span class="hint">gdebenz · по дням</span>{viz.help_badge("Сколько АЗС в статусах есть/нет/очередь/мало по gdebenz (краудсорс).", _v_avail_index(hist))}</h2>
+      <div class="card"><h2>Статусы АЗС <span class="hint">gdebenz · наличие · по дням</span>{viz.help_badge("Сколько АЗС в статусах есть/нет/очередь/мало по gdebenz. «Есть» = станция сообщила, что топливо (ЛЮБОЕ) есть — это НЕ сумма по видам (у станции может быть несколько видов), поэтому не сходится с числами на карточках видов.", _v_avail_index(hist))}</h2>
         {viz.legend([("Есть", viz.ST_GOOD, "rect"), ("Нет", viz.ST_CRIT, "rect"), ("Очередь", viz.ST_SERIOUS, "rect"), ("Мало", viz.ST_WARN, "rect")])}{status_chart}</div>
       <div class="card"><h2>Наличие по видам, АЗС <span class="hint">gdebenz · по дням</span>{viz.help_badge("Число АЗС, где марка есть сейчас (gdebenz). Видно, какой вид просаживается первым.", _v_fuel_avail(hist))}</h2>
         {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{fuel_avail}</div>
@@ -358,7 +394,7 @@ def _price_brand_table(stations):
         return "<div class='empty'>Снимок появится после ближайшего сбора</div>"
     agg = {}
     for s in stations:
-        a = agg.setdefault(s.get("brand") or "—", {"n": 0, "p": {f: [] for f in FUELS}})
+        a = agg.setdefault(_norm_brand(s.get("brand")), {"n": 0, "p": {f: [] for f in FUELS}})
         a["n"] += 1
         for f in FUELS:
             v = (s.get("prices") or {}).get(f)
@@ -382,7 +418,7 @@ def _gdebenz_brand_table(stations):
     grades = [FUEL_TO_GRADE[f] for f in FUELS]
     agg = {}
     for s in stations:
-        a = agg.setdefault(s.get("brand") or "—", {"n": 0, "yes": 0, **{g: 0 for g in grades}})
+        a = agg.setdefault(_norm_brand(s.get("brand")), {"n": 0, "yes": 0, **{g: 0 for g in grades}})
         a["n"] += 1
         a["yes"] += 1 if s.get("status") == "yes" else 0
         fs = {x.strip() for x in (s.get("fuels_now") or "").split(",") if x.strip()}

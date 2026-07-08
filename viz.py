@@ -339,10 +339,13 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
   padding:12px 16px;margin-bottom:14px;font-size:13.5px;line-height:1.5}
 .alert b{font-weight:700}
 @media (prefers-color-scheme:dark){.alert{background:#3a1414;color:#f2b8b8;border-color:#5a1f1f}}
-.fresh{display:flex;gap:18px;flex-wrap:wrap;align-items:center;font-size:12.5px;
-  color:var(--muted);margin-bottom:10px}
-.fresh .src{display:inline-flex;align-items:center;gap:6px}
-.fresh .dot{width:8px;height:8px;border-radius:50%}
+.fresh{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;
+  color:var(--ink2);margin-bottom:12px}
+.fresh .fbadge{display:inline-flex;align-items:center;gap:7px;border:1.5px solid var(--border);
+  border-radius:999px;padding:5px 12px;background:var(--surface)}
+.fresh .fbadge b{color:var(--ink);font-variant-numeric:tabular-nums}
+.fresh .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.fresh .fdays{color:var(--muted);font-size:12px}
 .stat-row{display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);margin:0 0 16px}
 .stat-row b{color:var(--ink);font-variant-numeric:tabular-nums}
 .events{list-style:none;padding:0;margin:4px 0 0;font-size:13px}
