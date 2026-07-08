@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Сборка единой страницы public/index.html из data/history.csv (+ снимки станций,
-которые передаёт run.py из памяти — на диск не сохраняются).
+Сборка единой страницы public/index.html из data/history.csv (+ снимки станций из памяти).
 
-Разделы: hero, плитки цен со спарклайнами, СВОДНАЯ доступность по видам топлива
-(из petrolplus и gdebenz вместе), интерактивные графики, таблицы по сетям.
+Дашборд организован ВОКРУГ ВИДОВ ТОПЛИВА: по каждому виду — цена и доступность отдельно
+(«есть сейчас» из gdebenz + «транзакции идут» из petrolplus), а не общая доступность АЗС.
+Разделы: строка-ситуация, per-fuel карточки, динамика цен, доступность по видам,
+общая ситуация с наличием, таблицы по сетям.
 """
 
 import html
@@ -17,13 +18,15 @@ import viz
 
 FUELS = ["АИ-92", "АИ-95", "АИ-98", "АИ-100", "ДТ"]
 FUEL_TO_GRADE = {"АИ-92": "92", "АИ-95": "95", "АИ-98": "98", "АИ-100": "100", "ДТ": "ДТ"}
-STATUS = {"yes": ("Есть", viz.ST_GOOD), "no": ("Нет", viz.ST_CRIT),
-          "queue": ("Очередь", viz.ST_SERIOUS), "low": ("Мало", viz.ST_WARN)}
 
 
 def _cfg(base):
     with open(os.path.join(base, "config.json"), encoding="utf-8") as f:
         return json.load(f)
+
+
+def _i(v):
+    return int(v) if v is not None else None
 
 
 def build(base_dir, price_stations=None, gd_stations=None):
@@ -50,81 +53,63 @@ def build(base_dir, price_stations=None, gd_stations=None):
             f"наличие <b>{html.escape(viz.short_dt(gs.get('ts_msk','')) or '—')}</b> МСК · "
             f"замеров: <b>{len(hist)}</b> · {html.escape(cfg.get('region_name',''))}")
 
-    # ------ HERO ------
-    resp = (cur("gb_yes") or 0) + (cur("gb_no") or 0) + (cur("gb_queue") or 0) + (cur("gb_low") or 0)
-    hero = f"""
-    <div class="hero">
-      <div class="card">
-        <div class="t-label">Средняя цена АИ-95 <span class="hint">медиана по АЗС</span></div>
-        <div class="t-row"><div class="hero-num">{viz.fmt(cur('p_med_АИ-95'),' ₽')}</div>
-          {viz.sparkline(col('p_med_АИ-95'), '--f95', w=150, h=44)}</div>
-        <div class="t-delta">{_delta(cur('p_med_АИ-95'), pre('p_med_АИ-95'),' ₽', good_down=True)}
-          <span class="sub" style="display:inline;margin-left:8px">коридор p10–p90
-          {viz.fmt(cur('p_p10_АИ-95'))}–{viz.fmt(cur('p_p90_АИ-95'))} ₽ · {viz.fmt(_i(cur('p_n_АИ-95')))} АЗС</span></div>
-      </div>
-      <div class="card">
-        <div class="t-label">Ситуация с наличием <span class="hint">сейчас</span></div>
-        <div class="t-row"><div class="hero-num" style="font-size:40px">{viz.fmt(_i(cur('gb_yes')))}</div>
-          <div class="sub" style="text-align:right">есть бензин<br>из {viz.fmt(_i(resp))} ответивших АЗС</div></div>
-        <div style="margin-top:10px">{_status_bar(last)}</div>
-        <div class="sub" style="margin-top:8px">petrolplus: доступны {viz.fmt(_i(cur('azs_available')))} из {viz.fmt(_i(cur('azs_total')))} АЗС</div>
-      </div>
+    # ---- строка-ситуация ----
+    situation = f"""
+    <div class="situation">
+      <span class="lead">Средняя АИ-95 · {viz.fmt(cur('p_med_АИ-95'),' ₽')}</span>
+      <span class="pill"><span class="dot" style="background:var({viz.ST_GOOD})"></span>Есть бензин: {viz.fmt(_i(cur('gb_yes')))}</span>
+      <span class="pill"><span class="dot" style="background:var({viz.ST_CRIT})"></span>Нет: {viz.fmt(_i(cur('gb_no')))}</span>
+      <span class="pill"><span class="dot" style="background:var({viz.ST_SERIOUS})"></span>Очередь: {viz.fmt(_i(cur('gb_queue')))}</span>
+      <span class="pill">petrolplus доступны: {viz.fmt(_i(cur('azs_available')))} из {viz.fmt(_i(cur('azs_total')))}</span>
     </div>"""
 
-    # ------ плитки цен ------
-    tiles = ""
-    for f in FUELS:
-        med, n = cur(f"p_med_{f}"), cur(f"p_n_{f}")
-        sub = (f"{viz.fmt(_i(n))} АЗС · p10–p90 {viz.fmt(cur(f'p_p10_{f}'))}–{viz.fmt(cur(f'p_p90_{f}'))}"
-               if med is not None else "нет данных")
-        tiles += viz.kpi(f, med, pre(f"p_med_{f}"), " ₽", sub=sub,
-                         spark=col(f"p_med_{f}"), var=viz.FUEL_VAR[f])
-    tiles = f'<div class="tiles c5">{tiles}</div>'
+    # ---- per-fuel карточки ----
+    cards = "".join(_fuel_card(f, col, cur, pre) for f in FUELS)
+    fuelgrid = f'<div class="fuelgrid">{cards}</div>'
 
-    # ------ график цен ------
-    price_series = [{"name": f, "var": viz.FUEL_VAR[f], "points": col(f"p_med_{f}")} for f in FUELS]
-    chart_prices = viz.line_chart("prices", labels, price_series, unit=" ₽")
+    # ---- график цен ----
+    chart_prices = viz.line_chart("prices", labels,
+        [{"name": f, "var": viz.FUEL_VAR[f], "points": col(f"p_med_{f}")} for f in FUELS], unit=" ₽")
 
-    # ------ СВОДНАЯ доступность по видам топлива ------
-    avail_matrix = _fuel_availability_table(last)
+    # ---- доступность ПО ВИДАМ (gdebenz «есть сейчас») ----
+    chart_avail_fuel = viz.line_chart("availfuel", labels,
+        [{"name": f, "var": viz.FUEL_VAR[f], "points": col(f"gb_now_{FUEL_TO_GRADE[f]}")}
+         for f in FUELS], y_int=True, end_labels=False)
 
-    # ------ графики наличия ------
-    chart_pp = viz.line_chart("availpp", labels, [
-        {"name": "Доступные", "var": viz.ST_GOOD, "points": col("azs_available")},
-        {"name": "Всего", "var": "--muted", "points": col("azs_total")},
-    ], y_int=True)
-    chart_gb = viz.line_chart("availgb", labels, [
+    # ---- общая ситуация (вторично) ----
+    chart_status = viz.line_chart("gbstatus", labels, [
         {"name": "Есть", "var": viz.ST_GOOD, "points": col("gb_yes")},
         {"name": "Нет", "var": viz.ST_CRIT, "points": col("gb_no")},
         {"name": "Очередь", "var": viz.ST_SERIOUS, "points": col("gb_queue")},
         {"name": "Мало", "var": viz.ST_WARN, "points": col("gb_low")},
-    ], y_int=True)
-    now_series = [{"name": f, "var": viz.FUEL_VAR[f],
-                   "points": col(f"gb_now_{FUEL_TO_GRADE[f]}")} for f in FUELS]
-    chart_now = viz.line_chart("nowgb", labels, now_series, y_int=True)
+    ], y_int=True, end_labels=False)
+    chart_pp = viz.line_chart("availpp", labels, [
+        {"name": "Доступные", "var": viz.ST_GOOD, "points": col("azs_available")},
+        {"name": "Всего", "var": "--muted", "points": col("azs_total")},
+    ], y_int=True, end_labels=False)
 
     body = f"""
     <header><h1>Бензин · Москва и ближнее Подмосковье</h1>
       <div class="meta">{meta}</div></header>
     {_banner(status)}
-    {hero}
+    {situation}
 
-    <div class="sec">Цены по видам топлива</div>
-    {tiles}
+    <div class="sec">Цены и доступность по видам топлива</div>
+    {fuelgrid}
+
     <section class="card"><h2>Динамика цен <span class="hint">медиана по АЗС · наведите для значений</span></h2>
       {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{chart_prices}</section>
 
-    <div class="sec">Доступность топлива — сводно</div>
-    <section class="card"><h2>По видам топлива <span class="hint">из обоих источников · последний замер</span></h2>
-      {avail_matrix}</section>
+    <section class="card"><h2>Доступность по видам топлива <span class="hint">gdebenz · число АЗС, где марка есть в наличии сейчас</span></h2>
+      {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{chart_avail_fuel}</section>
+
+    <div class="sec">Общая ситуация с наличием</div>
     <section class="grid2">
+      <div class="card"><h2>Статусы АЗС <span class="hint">gdebenz</span></h2>
+        {viz.legend([("Есть",viz.ST_GOOD,"rect"),("Нет",viz.ST_CRIT,"rect"),("Очередь",viz.ST_SERIOUS,"rect"),("Мало",viz.ST_WARN,"rect")])}{chart_status}</div>
       <div class="card"><h2>Доступность АЗС <span class="hint">petrolplus · транзакции идут</span></h2>
-        {viz.legend([("Доступные", viz.ST_GOOD),("Всего","--muted")])}{chart_pp}</div>
-      <div class="card"><h2>Наличие бензина <span class="hint">gdebenz · статусы</span></h2>
-        {viz.legend([("Есть",viz.ST_GOOD,"rect"),("Нет",viz.ST_CRIT,"rect"),("Очередь",viz.ST_SERIOUS,"rect"),("Мало",viz.ST_WARN,"rect")])}{chart_gb}</div>
+        {viz.legend([("Доступные",viz.ST_GOOD),("Всего","--muted")])}{chart_pp}</div>
     </section>
-    <section class="card"><h2>Какие марки есть сейчас <span class="hint">gdebenz · число АЗС с маркой в наличии</span></h2>
-      {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{chart_now}</section>
 
     <div class="sec">По сетям</div>
     <section class="card"><h2>Цены по сетям <span class="hint">медиана, ₽ (число АЗС) · petrolplus</span></h2>
@@ -132,76 +117,45 @@ def build(base_dir, price_stations=None, gd_stations=None):
     <section class="card"><h2>Наличие по сетям <span class="hint">gdebenz</span></h2>
       {_gdebenz_brand_table(gd_stations)}</section>
 
-    <p class="foot">Цены — petrolplus / АЗС-Локатор (выгрузка StationList.xls); «доступны» =
-      высокая доступность транзакций. Наличие — gdebenz.ru, краудсорс (сообщают
-      пользователи), оценка «снизу». АИ-98/100 продаются на немногих АЗС — ряды разреженные
-      (число АЗС указано у цифр). Величины справочные.</p>
+    <p class="foot">Цена и «продают/транзакции идут» — petrolplus / АЗС-Локатор (выгрузка
+      StationList.xls); «транзакции идут» = доля АЗС с высокой доступностью среди продающих
+      этот вид. «Есть сейчас» — gdebenz.ru, краудсорс (наличие сообщают пользователи), оценка
+      «снизу». АИ-98/100 продаются на немногих АЗС — цены разреженные. Величины справочные.</p>
     """
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(viz.wrap(f"Бензин · {viz.short_dt(last['ts_msk'])}", body))
     return out_path
 
 
-# ---------------------------------------------------------------- helpers ---
-def _i(v):
-    return int(v) if v is not None else None
+# ---------------------------------------------------------------- per-fuel ---
+def _fuel_card(f, col, cur, pre):
+    g = FUEL_TO_GRADE[f]
+    var = viz.FUEL_VAR[f]
+    med = cur(f"p_med_{f}")
+    n = _i(cur(f"p_n_{f}"))
+    navail = _i(cur(f"p_navail_{f}"))
+    now = _i(cur(f"gb_now_{g}"))
+    share = viz.pct(navail or 0, n) if n else None
+    spark = viz.sparkline(col(f"p_med_{f}"), var, w=92, h=28)
+    price_arrow = viz.arrow(med, pre(f"p_med_{f}"), good_down=True, unit=" ₽")
+    now_arrow = viz.arrow(now, pre(f"gb_now_{g}"), good_down=False)
+    return f"""
+    <div class="fuelcard" style="--accent:var({var})">
+      <div class="fc-head"><span class="fc-dot" style="background:var({var})"></span>
+        <span class="fc-name">{html.escape(f)}</span></div>
+      <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>
+      <div class="fc-sub">{price_arrow} · {viz.fmt(n)} АЗС с ценой</div>
+      <div class="fc-avail">
+        <div class="fc-arow"><span class="lbl">Есть сейчас</span>
+          <span class="num">{viz.fmt(now)} АЗС {now_arrow}</span></div>
+        <div class="fc-arow"><span class="lbl">Транзакции идут</span>
+          <span class="num">{viz.fmt(share)}%</span></div>
+        {viz.meter(share, viz.ST_GOOD)}
+      </div>
+    </div>"""
 
 
-def _delta(cur, prev, unit="", good_down=True):
-    if cur is None or prev is None:
-        return '<span class="d flat">нет прошлого</span>'
-    d = round(cur - prev, 2)
-    if abs(d) < 1e-9:
-        return '<span class="d flat">= без изм.</span>'
-    up = d > 0
-    good = (not up) if good_down else up
-    return f'<span class="d {"good" if good else "bad"}">{"↑" if up else "↓"} {viz.fmt(abs(d), unit)}</span>'
-
-
-def _status_bar(row):
-    segs = [("yes", row.get("gb_yes")), ("low", row.get("gb_low")),
-            ("queue", row.get("gb_queue")), ("no", row.get("gb_no"))]
-    total = sum(v or 0 for _, v in segs) or 1
-    out = '<div style="display:flex;height:10px;border-radius:6px;overflow:hidden;gap:2px">'
-    for st, v in segs:
-        if not v:
-            continue
-        name, var = STATUS[st]
-        w = 100 * v / total
-        out += f'<div title="{name}: {int(v)}" style="width:{w:.1f}%;background:var({var})"></div>'
-    out += "</div>"
-    chips = " ".join(
-        f'<span class="chip"><span class="dot" style="background:var({STATUS[st][1]})"></span>'
-        f'{STATUS[st][0]} {viz.fmt(_i(row.get("gb_"+st)))}</span>'
-        for st in ("yes", "no", "queue", "low"))
-    return out + f'<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px">{chips}</div>'
-
-
-def _fuel_availability_table(row):
-    trs = ""
-    for f in FUELS:
-        g = FUEL_TO_GRADE[f]
-        med = row.get(f"p_med_{f}")
-        n = _i(row.get(f"p_n_{f}"))
-        navail = _i(row.get(f"p_navail_{f}"))
-        nowg = _i(row.get(f"gb_now_{g}"))
-        share = viz.pct(navail or 0, n) if n else None
-        bar = ""
-        if share is not None:
-            bar = (f'<span class="bar" style="width:{max(4,share*0.6):.0f}px;'
-                   f'background:var({viz.ST_GOOD})"></span> ')
-        trs += (f'<tr><td class="b"><span class="chip"><span class="dot" '
-                f'style="background:var({viz.FUEL_VAR[f]})"></span>{html.escape(f)}</span></td>'
-                f'<td>{viz.fmt(med," ₽") if med is not None else "—"}</td>'
-                f'<td>{viz.fmt(n)}</td>'
-                f'<td>{bar}{viz.fmt(navail)}<span class="c"> · {viz.fmt(share)}%</span></td>'
-                f'<td>{viz.fmt(nowg)}</td></tr>')
-    return ('<div class="tablewrap"><table class="tbl" style="min-width:520px"><thead><tr>'
-            '<th>Вид топлива</th><th>Медиана цены</th><th>Продают (АЗС)</th>'
-            '<th>Доступны · транзакции</th><th>Есть сейчас (gdebenz)</th></tr></thead><tbody>'
-            + trs + '</tbody></table></div>')
-
-
+# ------------------------------------------------------------------ tables ---
 def _price_brand_table(stations):
     if not stations:
         return "<div class='empty'>Снимок цен появится после первого сбора</div>"

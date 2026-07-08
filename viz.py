@@ -91,6 +91,25 @@ def kpi(label, value, prev, unit="", good_down=True, sub="", spark=None, var="--
             f'<div class="t-delta">{delta}</div>{sub_html}</div>')
 
 
+# ------------------------------------------------------------------- meter ---
+def meter(share, var, height=8):
+    p = 0 if share is None else max(0, min(100, share))
+    return (f'<div class="meter" style="height:{height}px">'
+            f'<div class="meter-fill" style="width:{p:.0f}%;background:var({var})"></div></div>')
+
+
+def arrow(cur, prev, good_down=False, unit=""):
+    """Стрелка тренда: цвет = направление × хорошо ли это."""
+    if cur is None or prev is None:
+        return ""
+    d = round(cur - prev, 2)
+    if abs(d) < 1e-9:
+        return '<span class="d flat">=</span>'
+    up = d > 0
+    good = (not up) if good_down else up
+    return f'<span class="d {"good" if good else "bad"}">{"↑" if up else "↓"} {fmt(abs(d), unit)}</span>'
+
+
 # ------------------------------------------------------------------ legend ---
 def legend(items):
     # items: [(name, cssvar, kind)] kind='line'|'rect'
@@ -252,6 +271,28 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .d.flat{color:var(--muted);font-weight:500}
 .sub{color:var(--muted);font-size:11.5px;margin-top:6px}
 .hero-num{font-size:52px;font-weight:700;letter-spacing:-.03em;line-height:1}
+.situation{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--surface);
+  border:1px solid var(--border);border-radius:14px;padding:12px 16px;margin-bottom:16px;font-size:13.5px}
+.situation .lead{font-weight:660;font-size:15px}
+.situation .pill{display:inline-flex;align-items:center;gap:6px;color:var(--ink2)}
+.situation .pill .dot{width:9px;height:9px;border-radius:50%}
+.fuelgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+@media(max-width:900px){.fuelgrid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.fuelgrid{grid-template-columns:1fr}}
+.fuelcard{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+  padding:14px 15px 13px;position:relative;overflow:hidden}
+.fuelcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent)}
+.fc-head{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.fc-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+.fc-name{font-weight:660;font-size:14px}
+.fc-price{display:flex;align-items:flex-end;justify-content:space-between;gap:6px}
+.fc-val{font-size:24px;font-weight:680;letter-spacing:-.02em;line-height:1}
+.fc-sub{color:var(--muted);font-size:11px;margin-top:4px}
+.fc-avail{margin-top:11px;padding-top:10px;border-top:1px solid var(--border)}
+.fc-arow{display:flex;align-items:baseline;justify-content:space-between;font-size:12.5px}
+.fc-arow .lbl{color:var(--ink2)} .fc-arow .num{font-weight:640;font-variant-numeric:tabular-nums}
+.meter{width:100%;background:var(--grid);border-radius:99px;overflow:hidden;margin:5px 0 2px}
+.meter-fill{height:100%;border-radius:99px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:820px){.grid2{grid-template-columns:1fr}}
 .chartbox{position:relative}
 .chart{width:100%;height:auto;display:block;touch-action:none}
