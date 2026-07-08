@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Хранение данных в текстовом виде (удобно для git и GitHub Pages):
-  data/history.csv          — одна строка на прогон, все метрики (тренды)
-  data/latest_prices.json   — последний снимок АЗС с ценами (для таблиц)
-  data/latest_gdebenz.json  — последний снимок наличия
-  data/status.json          — статус последнего прогона (ошибки, свежесть)
+Хранение данных в текстовом виде (мало места, удобно для git и GitHub Pages):
+  data/history.csv   — одна строка на прогон, все метрики (тренды). Дозаписывается.
+  data/status.json   — статус/свежесть последнего прогона.
+Снимки станций на диск НЕ сохраняются: run.py передаёт их в дашборд из памяти.
 """
 
 import csv
@@ -14,8 +13,6 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 HISTORY = os.path.join(DATA_DIR, "history.csv")
-LATEST_PRICES = os.path.join(DATA_DIR, "latest_prices.json")
-LATEST_GDEBENZ = os.path.join(DATA_DIR, "latest_gdebenz.json")
 STATUS = os.path.join(DATA_DIR, "status.json")
 
 

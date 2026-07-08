@@ -1,23 +1,28 @@
 name: Collect fuel stats
 
 # Собирает данные и публикует дашборд 2 раза в день.
-# Время в cron — UTC. МСК = UTC+3, поэтому 06:00 UTC = 09:00 МСК, 18:00 UTC = 21:00 МСК.
+# cron — в UTC. МСК = UTC+3: 06:00 UTC = 09:00 МСК, 18:00 UTC = 21:00 МСК.
 on:
   schedule:
     - cron: "0 6 * * *"
     - cron: "0 18 * * *"
-  workflow_dispatch: {}   # кнопка "Run workflow" для проверки вручную
+  workflow_dispatch: {}     # кнопка "Run workflow" для ручной проверки
 
 permissions:
-  contents: write          # чтобы дописывать историю и index.html обратно в репозиторий
+  contents: write           # дописывать историю обратно в репозиторий
+  pages: write              # публиковать дашборд
+  id-token: write
 
 concurrency:
-  group: collect
+  group: pages
   cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,14 +36,23 @@ jobs:
       - name: Collect + build dashboard
         run: python run.py
 
-      - name: Commit results
+      - name: Commit history (only small text files)
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data index.html
+          git add data/history.csv data/status.json
           if git diff --cached --quiet; then
-            echo "Нет изменений для коммита."
+            echo "Нет изменений истории."
           else
             git commit -m "data: $(date -u +%Y-%m-%dT%H:%MZ)"
             git push
           fi
+
+      - name: Upload dashboard for Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

@@ -44,12 +44,11 @@ def main():
 
     status = store.load_json(store.STATUS) or {}
     price_summary = gd_summary = None
+    price_stations = gd_stations = None
 
     # 1) Цены
     try:
         price_summary, price_stations = collect.collect_prices(cfg)
-        store.write_json(store.LATEST_PRICES,
-                         {"ts_msk": ts_msk, "stations": price_stations})
         status["prices"] = {"ok": True, "ts_msk": ts_msk, "error": None,
                             "azs_total": price_summary["azs_total"],
                             "azs_available": price_summary["azs_available"]}
@@ -65,8 +64,6 @@ def main():
     # 2) Наличие
     try:
         gd_summary, gd_stations = collect_gdebenz.collect_availability(cfg)
-        store.write_json(store.LATEST_GDEBENZ,
-                         {"ts_msk": ts_msk, "stations": gd_stations})
         status["gdebenz"] = {"ok": True, "ts_msk": ts_msk, "error": None,
                              "total": gd_summary["total"], "yes": gd_summary["n_yes"],
                              "no": gd_summary["n_no"]}
@@ -90,8 +87,9 @@ def main():
     status["region"] = cfg.get("region_name")
     store.write_json(store.STATUS, status)
 
-    # 4) Дашборд
-    out = build_dashboard.build(BASE_DIR)
+    # 4) Дашборд (снимки станций передаём из памяти, на диск не сохраняем)
+    out = build_dashboard.build(BASE_DIR, price_stations=price_stations,
+                                gd_stations=gd_stations)
     print("  Дашборд собран:", out)
 
     # Ненулевой код выхода только если ОБА источника упали (для сигнала в CI)

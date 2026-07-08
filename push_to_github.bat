@@ -21,5 +21,6 @@ git remote add origin %REPO%
 git push -u origin main
 
 echo.
-echo Done. Next: on GitHub open Settings -> Pages, and Settings -> Actions (see README).
+echo Done. Next on GitHub: enable Actions, then Settings / Pages / Source = GitHub Actions.
+echo See README.md for the exact steps.
 pause

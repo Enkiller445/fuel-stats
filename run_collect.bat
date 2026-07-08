@@ -10,7 +10,7 @@ python run.py
 set RC=%errorlevel%
 if "%~1"=="/quiet" exit /b %RC%
 if "%RC%"=="0" (
-  start "" "index.html"
+  start "" "public\index.html"
 ) else (
   echo.
   echo Collection had errors - see the log above.
