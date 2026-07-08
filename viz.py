@@ -119,15 +119,17 @@ def arrow(cur, prev, good_down=False, unit=""):
 
 
 # ------------------------------------------------------------------ legend ---
-def legend(items):
-    # items: [(name, cssvar, kind)] kind='line'|'rect'
+def legend(items, chart_id=None):
+    # items: [(name, cssvar, kind)] kind='line'|'rect'. chart_id → кликабельно (скрыть/показать линию)
     sp = ""
-    for name, var, *rest in items:
+    for i, (name, var, *rest) in enumerate(items):
         kind = rest[0] if rest else "line"
         key = (f'<span class="k-line" style="background:var({var})"></span>' if kind == "line"
                else f'<span class="k-rect" style="background:var({var})"></span>')
-        sp += f'<span class="lg">{key}{html.escape(name)}</span>'
-    return f'<div class="legend">{sp}</div>'
+        cls = f'lg tog" data-cid="{chart_id}" data-si="{i}' if chart_id else "lg"
+        sp += f'<span class="{cls}">{key}{html.escape(name)}</span>'
+    hint = ' <span class="lg-hint">(клик — скрыть)</span>' if chart_id else ""
+    return f'<div class="legend">{sp}{hint}</div>'
 
 
 # -------------------------------------------------------------- line chart ---
@@ -230,7 +232,8 @@ def line_chart(chart_id, labels, series, unit="", area=False, y_int=False,
                  f'<title>{html.escape(ann.get("full", ann.get("label","")))}</title></text>')
 
     # area (только для одиночной серии) + линии
-    for s in series:
+    for si, s in enumerate(series):
+        P.append(f'<g class="ser" data-cid="{chart_id}" data-si="{si}">')
         pts = s["points"]
         v = s["var"]
         if area and len(series) == 1:
@@ -253,6 +256,7 @@ def line_chart(chart_id, labels, series, unit="", area=False, y_int=False,
             if end_labels:
                 P.append(f'<text class="endlab" x="{X(li)+6:.1f}" y="{Y(pts[li])+4:.1f}" '
                          f'style="fill:var({v})">{html.escape(s["name"])}</text>')
+        P.append('</g>')
 
     # crosshair-слой + прозрачный hit-rect
     P.append(f'<g class="xhair" data-cid="{chart_id}"></g>')
@@ -400,6 +404,10 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .chart .xh-dot{stroke:var(--surface);stroke-width:2}
 .legend{display:flex;gap:15px;flex-wrap:wrap;margin-bottom:6px}
 .lg{color:var(--ink2);font-size:12.5px;display:flex;align-items:center;gap:6px}
+.lg.tog{cursor:pointer;user-select:none;border-radius:6px;padding:2px 5px}
+.lg.tog:hover{background:rgba(127,127,127,.1)}
+.lg-off{opacity:.35;text-decoration:line-through}
+.lg-hint{color:var(--muted);font-size:11px}
 .k-line{width:14px;height:3px;border-radius:2px;display:inline-block}
 .k-rect{width:11px;height:11px;border-radius:3px;display:inline-block}
 .tip{position:absolute;pointer-events:none;background:var(--surface);color:var(--ink);
@@ -449,8 +457,10 @@ _SCRIPT = """
       var vx=toViewX(evt);if(vx==null)return;var i=nearest(vx);var x=d.xs[i];
       var parts='<line class="xh-line" x1="'+x+'" y1="'+geo.top+'" x2="'+x+'" y2="'+geo.bottom+'"/>';
       var rows='';
-      d.series.forEach(function(s){
+      d.series.forEach(function(s,j){
         if(s.ys[i]==null)return;
+        var grp=box.querySelector('.ser[data-si="'+j+'"]');
+        if(grp && grp.style.display==='none')return;   // скрытые легендой — пропускаем
         parts+='<circle class="xh-dot" cx="'+x+'" cy="'+s.ys[i]+'" r="4" style="fill:var('+s.var+')"/>';
         rows+='<div class="tt-row"><span class="tt-l"><span class="tt-k" style="background:var('+s.var+')"></span>'+esc(s.name)+'</span><span class="tt-v">'+fmtNum(s.vals[i])+esc(d.unit)+'</span></div>';
       });
@@ -486,6 +496,17 @@ _SCRIPT = """
   });
   document.addEventListener('click',function(){
     document.querySelectorAll('.help.open').forEach(function(h){h.classList.remove('open');});
+  });
+  // переключатель линий в легенде: клик — скрыть/показать серию
+  document.querySelectorAll('.lg.tog').forEach(function(el){
+    el.addEventListener('click',function(){
+      var cid=el.getAttribute('data-cid'), si=el.getAttribute('data-si');
+      var g=document.querySelector('.ser[data-cid="'+cid+'"][data-si="'+si+'"]');
+      if(!g)return;
+      var off=g.style.display==='none';
+      g.style.display=off?'':'none';
+      el.classList.toggle('lg-off',!off);
+    });
   });
 })();
 </script>

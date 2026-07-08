@@ -270,15 +270,15 @@ def _availability_chart(cfg, hist, drows, dlabels):
     <div class="sec">Доступность топлива</div>
     <section class="grid2">
       <div class="card"><h2>Индекс доступности, % <span class="hint">оба источника вместе + {ma_n}-дн. среднее</span>{viz.help_badge("Единый индекс = среднее двух: доля АЗС с «есть» (gdebenz) и доля работающих АЗС (petrolplus). Линия среднего сглаживает суточный шум.", _v_avail_index(hist))}</h2>
-        {viz.legend([("Индекс", viz.ST_GOOD), (f"{ma_n}-дн. среднее", "--f95")])}{idx_chart}</div>
+        {viz.legend([("Индекс", viz.ST_GOOD), (f"{ma_n}-дн. среднее", "--f95")], "availidx")}{idx_chart}</div>
       <div class="card"><h2>Источники доступности, % <span class="hint">каждый по отдельности</span>{viz.help_badge("Два исходных показателя, из которых считается индекс: наличие по gdebenz и транзакции по petrolplus. Обычно идут рядом.", _v_avail_index(hist))}</h2>
-        {viz.legend([("gdebenz «есть»", "--f95"), ("petrolplus «транзакции»", "--f92")])}{src_chart}</div>
+        {viz.legend([("gdebenz «есть»", "--f95"), ("petrolplus «транзакции»", "--f92")], "availsrc")}{src_chart}</div>
     </section>
     <section class="grid2">
       <div class="card"><h2>Статусы АЗС <span class="hint">gdebenz · наличие · по дням</span>{viz.help_badge("Сколько АЗС в статусах есть/нет/очередь/мало по gdebenz. «Есть» = станция сообщила, что топливо (ЛЮБОЕ) есть — это НЕ сумма по видам (у станции может быть несколько видов), поэтому не сходится с числами на карточках видов.", _v_avail_index(hist))}</h2>
-        {viz.legend([("Есть", viz.ST_GOOD, "rect"), ("Нет", viz.ST_CRIT, "rect"), ("Очередь", viz.ST_SERIOUS, "rect"), ("Мало", viz.ST_WARN, "rect")])}{status_chart}</div>
+        {viz.legend([("Есть", viz.ST_GOOD, "rect"), ("Нет", viz.ST_CRIT, "rect"), ("Очередь", viz.ST_SERIOUS, "rect"), ("Мало", viz.ST_WARN, "rect")], "gbstatus")}{status_chart}</div>
       <div class="card"><h2>Наличие по видам, АЗС <span class="hint">gdebenz · по дням</span>{viz.help_badge("Число АЗС, где марка есть сейчас (gdebenz). Видно, какой вид просаживается первым.", _v_fuel_avail(hist))}</h2>
-        {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{fuel_avail}</div>
+        {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS], "availfuel")}{fuel_avail}</div>
     </section>"""
 
 
@@ -319,10 +319,10 @@ def _price_charts(cfg, hist, days, drows, dlabels, all_events):
     return f"""
     <div class="sec">Цены · динамика и сигнал дефицита</div>
     <section class="card"><h2>Медианная цена по видам <span class="hint">по дням · ₽ · наведите для значений</span>{viz.help_badge("Медианная цена каждого вида по дням (замер около заданного часа — без внутрисуточного шума).", _v_price95(hist))}</h2>
-      {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{price_daily}</section>
+      {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS], "pxday")}{price_daily}</section>
     <section class="grid2">
       <div class="card"><h2>АИ-95: независимые vs сети <span class="hint">₽ · по дням</span>{viz.help_badge("Независимые АЗС (вне ВИНК) поднимают цены раньше сетей — их отрыв сигналит о дефиците. Показаны независимые, сети и отслеживаемые сети.", _v_spread(hist))}</h2>
-        {viz.legend([("Независимые", viz.ST_CRIT), ("Сети", "--f95")] + [(nw, NET_COLORS.get(nw, "--f98")) for nw in cfg.get("tracked_networks", [])])}{net}</div>
+        {viz.legend([("Независимые", viz.ST_CRIT), ("Сети", "--f95")] + [(nw, NET_COLORS.get(nw, "--f98")) for nw in cfg.get("tracked_networks", [])], "pxnet")}{net}</div>
       <div class="card"><h2>Насколько независимые дороже <span class="hint">спред, ₽ · по дням</span>{viz.help_badge("Разница медиан: независимые минус сети. Растёт — дефицит усиливается.", _v_spread(hist))}</h2>
         {spread}</div>
     </section>"""
