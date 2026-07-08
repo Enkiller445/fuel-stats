@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 public/
 data/latest_*.json
+data/events_auto.json
 .DS_Store
 Thumbs.db

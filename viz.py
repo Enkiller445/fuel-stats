@@ -91,6 +91,14 @@ def kpi(label, value, prev, unit="", good_down=True, sub="", spark=None, var="--
             f'<div class="t-delta">{delta}</div>{sub_html}</div>')
 
 
+# -------------------------------------------------------------- help badge ---
+def help_badge(definition, verdict=""):
+    """Иконка «?»: наведи/тапни — «что это» + авто-вывод по текущим данным."""
+    v = (f'<span class="hp-v"><b>Вывод сейчас.</b> {verdict}</span>' if verdict else "")
+    return ('<span class="help" tabindex="0" role="button" aria-label="Пояснение">?'
+            f'<span class="help-pop"><span class="hp-d"><b>Что это.</b> {definition}</span>{v}</span></span>')
+
+
 # ------------------------------------------------------------------- meter ---
 def meter(share, var, height=8):
     p = 0 if share is None else max(0, min(100, share))
@@ -335,6 +343,19 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .events li{padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:10px}
 .events .ed{color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
 .events a{color:var(--f95);text-decoration:none}
+.events .ev-src{color:var(--muted);font-size:11px}
+.ev-auto{font-size:10.5px;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:0 5px;margin-left:2px}
+.help{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;
+  border-radius:50%;border:1px solid var(--border);color:var(--muted);font-size:11px;font-weight:600;
+  cursor:pointer;margin-left:7px;position:relative;vertical-align:middle;user-select:none;flex:0 0 auto}
+.help:hover{color:var(--ink);border-color:var(--muted)}
+.help-pop{display:none;position:absolute;top:23px;left:0;z-index:30;width:min(290px,80vw);
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 13px;
+  box-shadow:0 8px 26px rgba(0,0,0,.18);font-weight:400;font-size:12.5px;line-height:1.55;
+  color:var(--ink2);text-align:left;cursor:auto;white-space:normal}
+.help:hover .help-pop,.help.open .help-pop{display:block}
+.help-pop b{color:var(--ink)}
+.hp-v{display:block;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
 .sub{color:var(--muted);font-size:11.5px;margin-top:6px}
 .hero-num{font-size:52px;font-weight:700;letter-spacing:-.03em;line-height:1}
 .situation{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--surface);
@@ -439,6 +460,23 @@ _SCRIPT = """
     hit.addEventListener('pointerdown',show);
     hit.addEventListener('pointerleave',hide);
     svg.addEventListener('pointerleave',hide);
+  });
+  // «?»-подсказки: клик — переключить (мобильные), hover — CSS (десктоп)
+  document.querySelectorAll('.help').forEach(function(el){
+    el.addEventListener('click',function(e){
+      e.stopPropagation();
+      var open=el.classList.contains('open');
+      document.querySelectorAll('.help.open').forEach(function(h){h.classList.remove('open');});
+      if(!open){
+        el.classList.add('open');
+        var pop=el.querySelector('.help-pop'); var r=el.getBoundingClientRect();
+        if(pop){ if(r.left>window.innerWidth*0.55){pop.style.left='auto';pop.style.right='0';}
+                 else {pop.style.left='0';pop.style.right='auto';} }
+      }
+    });
+  });
+  document.addEventListener('click',function(){
+    document.querySelectorAll('.help.open').forEach(function(h){h.classList.remove('open');});
   });
 })();
 </script>

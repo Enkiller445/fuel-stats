@@ -75,6 +75,15 @@ def main():
         print("  НАЛИЧИЕ: ОШИБКА:", e)
         traceback.print_exc()
 
+    # 2.5) Автоподборка событий из новостей (не критично)
+    try:
+        import collect_events
+        ev = collect_events.collect_to_file(
+            cfg, os.path.join(BASE_DIR, "data", "events_auto.json"))
+        print(f"  События (автоподборка): {len(ev)}")
+    except Exception as e:
+        print("  СОБЫТИЯ: пропущено:", e)
+
     # 3) История (если хоть один источник ответил)
     if price_summary or gd_summary:
         row = store.build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary)
