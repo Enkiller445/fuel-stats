@@ -83,7 +83,7 @@ def build(base_dir, price_stations=None, gd_stations=None):
         _header(cfg, status, hist),
         _alerts(hist, cfg),
         _hero(hist, cur, drows),
-        f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду: цена (petrolplus) и наличие по gdebenz. «Есть сейчас» — сколько АЗС имеют этот вид прямо сейчас; «Доля АЗС с ним» — их процент от всех АЗС в рамке (честно по видам). Общая работоспособность заправок (petrolplus, на уровне станции, НЕ по видам) — в «Доступности топлива» выше, чтобы не смешивать.", _v_fuel_avail(hist))}</div>',
+        f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду. Цена — petrolplus. «Продают» — сколько АЗС в рамке продают вид. «Из них работают %» — доля этих АЗС с высокой доступностью (petrolplus: идут транзакции → топливо реально отпускается; надёжный сигнал «есть», знаменатель именно продающие вид, а не все). «gdebenz: есть на N» — независимое краудсорс-подтверждение наличия. Общая работоспособность всех АЗС (не по видам) — в «Доступности топлива» выше.", _v_fuel_avail(hist))}</div>',
         f'<div class="fuelgrid">{"".join(_fuel_card(f, hist, cur, drows) for f in FUELS)}</div>',
         _availability_chart(cfg, hist, drows, dlabels),
         _price_charts(cfg, hist, days, drows, dlabels, events + auto_events),
@@ -190,10 +190,10 @@ def _fuel_card(f, hist, cur, drows):
     g = FUEL_TO_GRADE[f]
     var = viz.FUEL_VAR[f]
     med = cur(f"p_med_{f}")
-    now = _i(cur(f"gb_now_{g}"))
-    tot = _i(cur("gb_total"))
-    # честная per-fuel доступность: доля всех АЗС, где вид есть сейчас (gdebenz, один источник)
-    share = viz.pct(now or 0, tot) if tot else None
+    n = _i(cur(f"p_n_{f}"))                 # продают этот вид (petrolplus)
+    navail = _i(cur(f"p_navail_{f}"))       # из них с высокой доступностью (работают)
+    now = _i(cur(f"gb_now_{g}"))            # gdebenz: краудсорс-подтверждение
+    share = viz.pct(navail or 0, n) if n else None   # знаменатель = ПРОДАЮЩИЕ, не все
     spark = viz.sparkline(analytics.col(drows, f"p_med_{f}"), var, w=84, h=30)
     return f"""
     <div class="fuelcard" style="--accent:var({var})">
@@ -201,9 +201,10 @@ def _fuel_card(f, hist, cur, drows):
         <span class="fc-name">{html.escape(f)}</span></div>
       <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>
       <div class="fc-avail">
-        <div class="fc-arow"><span class="lbl">Есть сейчас</span><span class="num">{viz.fmt(now)} АЗС</span></div>
-        <div class="fc-arow"><span class="lbl">Доля АЗС с ним</span><span class="num">{viz.fmt(share)}%</span></div>
+        <div class="fc-arow"><span class="lbl">Продают</span><span class="num">{viz.fmt(n)} АЗС</span></div>
+        <div class="fc-arow"><span class="lbl">Из них работают</span><span class="num">{viz.fmt(share)}%</span></div>
         {viz.meter(share, viz.ST_GOOD)}
+        <div class="fc-sub" style="margin-top:6px">gdebenz: есть на {viz.fmt(now)} АЗС</div>
       </div>
     </div>"""
 
@@ -357,9 +358,8 @@ def _price_brand_table(stations):
         return "<div class='empty'>Снимок появится после ближайшего сбора</div>"
     agg = {}
     for s in stations:
-        a = agg.setdefault(s.get("brand") or "—", {"n": 0, "avail": 0, "p": {f: [] for f in FUELS}})
+        a = agg.setdefault(s.get("brand") or "—", {"n": 0, "p": {f: [] for f in FUELS}})
         a["n"] += 1
-        a["avail"] += 1 if s.get("available") else 0
         for f in FUELS:
             v = (s.get("prices") or {}).get(f)
             if v is not None:
