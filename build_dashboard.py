@@ -83,7 +83,7 @@ def build(base_dir, price_stations=None, gd_stations=None):
         _header(cfg, status, hist),
         _alerts(hist, cfg),
         _hero(hist, cur, drows),
-        f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду: цена (petrolplus, медиана по свежим ценам) и наличие. «Есть сейчас» — сколько АЗС имеют этот вид прямо сейчас (gdebenz). «Транзакции» — доля работающих АЗС среди продающих вид (petrolplus).", _v_fuel_avail(hist))}</div>',
+        f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду: цена (petrolplus) и наличие по gdebenz. «Есть сейчас» — сколько АЗС имеют этот вид прямо сейчас; «Доля АЗС с ним» — их процент от всех АЗС в рамке (честно по видам). Общая работоспособность заправок (petrolplus, на уровне станции, НЕ по видам) — в «Доступности топлива» выше, чтобы не смешивать.", _v_fuel_avail(hist))}</div>',
         f'<div class="fuelgrid">{"".join(_fuel_card(f, hist, cur, drows) for f in FUELS)}</div>',
         _availability_chart(cfg, hist, drows, dlabels),
         _price_charts(cfg, hist, days, drows, dlabels, events + auto_events),
@@ -190,10 +190,10 @@ def _fuel_card(f, hist, cur, drows):
     g = FUEL_TO_GRADE[f]
     var = viz.FUEL_VAR[f]
     med = cur(f"p_med_{f}")
-    n = _i(cur(f"p_n_{f}"))
-    navail = _i(cur(f"p_navail_{f}"))
     now = _i(cur(f"gb_now_{g}"))
-    share = viz.pct(navail or 0, n) if n else None
+    tot = _i(cur("gb_total"))
+    # честная per-fuel доступность: доля всех АЗС, где вид есть сейчас (gdebenz, один источник)
+    share = viz.pct(now or 0, tot) if tot else None
     spark = viz.sparkline(analytics.col(drows, f"p_med_{f}"), var, w=84, h=30)
     return f"""
     <div class="fuelcard" style="--accent:var({var})">
@@ -202,7 +202,7 @@ def _fuel_card(f, hist, cur, drows):
       <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>
       <div class="fc-avail">
         <div class="fc-arow"><span class="lbl">Есть сейчас</span><span class="num">{viz.fmt(now)} АЗС</span></div>
-        <div class="fc-arow"><span class="lbl">Транзакции идут</span><span class="num">{viz.fmt(share)}%</span></div>
+        <div class="fc-arow"><span class="lbl">Доля АЗС с ним</span><span class="num">{viz.fmt(share)}%</span></div>
         {viz.meter(share, viz.ST_GOOD)}
       </div>
     </div>"""
