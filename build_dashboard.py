@@ -56,8 +56,9 @@ def build(base_dir, price_stations=None, gd_stations=None):
     cfg = _cfg(base_dir)
     hist = store.load_history()
     status = store.load_json(store.STATUS) or {}
-    events = _load_events(base_dir)
-    auto_events = _load_auto(base_dir)
+    show_events = cfg.get("show_events", False)
+    events = _load_events(base_dir) if show_events else []
+    auto_events = _load_auto(base_dir) if show_events else []
     out_dir = os.path.join(base_dir, "public")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "index.html")
@@ -87,7 +88,7 @@ def build(base_dir, price_stations=None, gd_stations=None):
         _availability_chart(cfg, hist, drows, dlabels),
         _price_charts(cfg, hist, days, drows, dlabels, events + auto_events),
         _timing_charts(hist, drows),
-        _events_section(events, auto_events),
+        (_events_section(events, auto_events) if show_events else ""),
         '<div class="sec">По сетям · последний замер</div>',
         f'<section class="card"><h2>Цены по сетям <span class="hint">медиана, ₽ · petrolplus</span>{viz.help_badge("Медиана цены по каждой сети и виду. Рядом — число АЗС сети с ценой на вид.", _v_spread(hist))}</h2>{_price_brand_table(price_stations)}</section>',
         f'<section class="card"><h2>Наличие по сетям <span class="hint">gdebenz</span>{viz.help_badge("По каждой сети: сколько АЗС «есть»/«нет» и на скольких сейчас есть каждый вид (gdebenz, краудсорс).")}</h2>{_gdebenz_brand_table(gd_stations)}</section>',
@@ -280,7 +281,7 @@ def _price_charts(cfg, hist, days, drows, dlabels, all_events):
         unit=" ₽", area=True, end_labels=False)
     return f"""
     <div class="sec">Цены · динамика и сигнал дефицита</div>
-    <section class="card"><h2>Медианная цена по видам <span class="hint">по дням · ₽ · наведите для значений</span>{viz.help_badge("Медианная цена каждого вида по дням (замер около заданного часа — без внутрисуточного шума). ◆ — событие из ленты.", _v_price95(hist))}</h2>
+    <section class="card"><h2>Медианная цена по видам <span class="hint">по дням · ₽ · наведите для значений</span>{viz.help_badge("Медианная цена каждого вида по дням (замер около заданного часа — без внутрисуточного шума).", _v_price95(hist))}</h2>
       {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS])}{price_daily}</section>
     <section class="grid2">
       <div class="card"><h2>АИ-95: независимые vs сети <span class="hint">₽ · по дням</span>{viz.help_badge("Независимые АЗС (вне ВИНК) поднимают цены раньше сетей — их отрыв сигналит о дефиците. Показаны независимые, сети и отслеживаемые сети.", _v_spread(hist))}</h2>
@@ -401,8 +402,8 @@ def _footer():
     return ('<p class="foot"><b>Доступность топлива</b> — единый индекс из двух источников: '
             '«есть бензин» (gdebenz, краудсорс — сообщают пользователи) и «идут транзакции» '
             '(petrolplus / АЗС-Локатор — высокая доступность на АЗС). Цена — petrolplus, медиана '
-            'по свежим ценам. Спред «независимые − сети» — ранний сигнал дефицита. Новости — '
-            'Google News (проверяйте по источнику). Всё справочно.</p>')
+            'по свежим ценам. Спред «независимые − сети» — ранний сигнал дефицита. '
+            'Всё справочно.</p>')
 
 
 # --------------------------------------------------------------- verdicts ---
