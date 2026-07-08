@@ -18,8 +18,12 @@ from email.utils import parsedate_to_datetime
 GNEWS = "https://news.google.com/rss/search"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                          "AppleWebKit/537.36 Chrome/125.0 Safari/537.36"}
-KEYWORDS = ("бензин", "топлив", "дизел", "нпз", "азс", "заправк", "лимит", "дефицит", "октан")
-DEFAULT_QUERIES = ["дефицит бензина", "лимит на бензин АЗС", "цены на бензин Москва", "НПЗ"]
+# фон (тема) — чтобы отсечь совсем не про топливо
+TOPIC = ("бензин", "топлив", "дизел", "нпз", "азс", "заправк", "октан")
+# сильные слова — оставляем только ЗНАЧИМЫЕ события
+STRONG = ("дефицит", "лимит", "ограничен", "очеред", "останов", "прекрат", "кризис",
+          "подорожал", "рост цен", "карточк", "раз в сутки", "атак", "бпла", "дрон", "удар")
+DEFAULT_QUERIES = ["дефицит бензина", "лимит на бензин АЗС", "атака НПЗ топливо", "бензиновый кризис"]
 
 
 def _clean_title(t, source):
@@ -29,7 +33,7 @@ def _clean_title(t, source):
     return t
 
 
-def fetch_events(cfg, days_back=45, cap=18):
+def fetch_events(cfg, days_back=45, cap=10):
     queries = cfg.get("event_queries", DEFAULT_QUERIES)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
     items = {}
@@ -60,7 +64,8 @@ def fetch_events(cfg, days_back=45, cap=18):
                 continue
             title = _clean_title(title, source)
             low = title.lower()
-            if not any(k in low for k in KEYWORDS):
+            # только значимые: тема И сильное слово
+            if not (any(k in low for k in TOPIC) and any(k in low for k in STRONG)):
                 continue
             key = low[:70]
             if key not in items:

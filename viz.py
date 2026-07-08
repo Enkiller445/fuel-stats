@@ -131,10 +131,10 @@ def legend(items):
 
 
 # -------------------------------------------------------------- line chart ---
-def bar_chart(labels, values, var="--f95", unit="", height=200, highlight="max"):
+def bar_chart(labels, values, var="--f95", unit="", height=250, highlight="max"):
     """Столбцы (день недели / час суток). highlight='max'|'min'|None — какой столбец выделить."""
-    W, H = 860, height
-    padL, padR, padT, padB = 44, 12, 14, 30
+    W, H = 480, height
+    padL, padR, padT, padB = 34, 12, 16, 40
     plotW, plotH = W - padL - padR, H - padT - padB
     real = [v for v in values if v is not None]
     if not real:
@@ -143,7 +143,8 @@ def bar_chart(labels, values, var="--f95", unit="", height=200, highlight="max")
     vmin = min(0, min(real))
     n = len(values)
     slot = plotW / n
-    bw = min(26, slot * 0.64)
+    bw = min(26, slot * 0.66)
+    lab_step = 1 if n <= 8 else (2 if n <= 14 else 3)  # реже подписи при плотности
     def Y(v):
         return padT + plotH * (1 - (v - vmin) / (vmax - vmin or 1))
     hi_i = (values.index(max(real)) if highlight == "max"
@@ -153,31 +154,32 @@ def bar_chart(labels, values, var="--f95", unit="", height=200, highlight="max")
         v = vmin + (vmax - vmin) * k / 3
         y = Y(v)
         P.append(f'<line class="grid" x1="{padL}" y1="{y:.1f}" x2="{W-padR}" y2="{y:.1f}"/>')
-        P.append(f'<text class="ylab" x="{padL-6}" y="{y+4:.1f}">{v:.0f}</text>')
+        P.append(f'<text class="ylab" x="{padL-5}" y="{y+4:.1f}">{v:.0f}</text>')
     base = Y(vmin)
     for i, v in enumerate(values):
         cx = padL + slot * (i + 0.5)
-        P.append(f'<text class="xlab" x="{cx:.1f}" y="{H-11}">{html.escape(str(labels[i]))}</text>')
+        if i % lab_step == 0 or i == hi_i:
+            P.append(f'<text class="xlab" x="{cx:.1f}" y="{H-14}">{html.escape(str(labels[i]))}</text>')
         if v is None:
             continue
         y = Y(v)
         color = var if i == hi_i else "--muted"
         P.append(f'<rect x="{cx-bw/2:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{max(1,base-y):.1f}" '
-                 f'rx="3" style="fill:var({color})" opacity="{1 if i==hi_i else 0.55}">'
+                 f'rx="3" style="fill:var({color})" opacity="{1 if i==hi_i else 0.5}">'
                  f'<title>{html.escape(str(labels[i]))}: {fmt(v)}{unit}</title></rect>')
     P.append("</svg>")
     return f'<div class="chartbox">{"".join(P)}</div>'
 
 
 def line_chart(chart_id, labels, series, unit="", area=False, y_int=False,
-               height=270, end_labels=True, annotations=None):
+               height=300, end_labels=True, annotations=None):
     """
     series: [{'name','var','points':[y|None,...]}]
     Возвращает интерактивный график: сетка, заливка (area), линии, конечные точки/подписи,
     прозрачный слой для наведения; crosshair+тултип рисует общий JS (см. wrap()).
     """
-    W, H = 860, height
-    padL, padR, padT, padB = 52, 58, 14, 34
+    W, H = 480, height
+    padL, padR, padT, padB = 40, 50, 16, 42
     plotW, plotH = W - padL - padR, H - padT - padB
 
     ys_all = [y for s in series for y in s["points"] if y is not None]
@@ -201,20 +203,20 @@ def line_chart(chart_id, labels, series, unit="", area=False, y_int=False,
     P = [f'<svg viewBox="0 0 {W} {H}" class="chart" data-chart-id="{chart_id}" '
          f'preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">']
 
-    # сетка + подписи Y
-    for k in range(5):
-        val = ymin + (ymax - ymin) * k / 4
+    # сетка + подписи Y (меньше линий — чище на телефоне)
+    for k in range(4):
+        val = ymin + (ymax - ymin) * k / 3
         y = Y(val)
         P.append(f'<line class="grid" x1="{padL}" y1="{y:.1f}" x2="{W-padR}" y2="{y:.1f}"/>')
         lab = f"{val:.0f}" if y_int else f"{val:,.1f}".replace(",", " ").replace(".", ",")
-        P.append(f'<text class="ylab" x="{padL-8}" y="{y+4:.1f}">{lab}</text>')
+        P.append(f'<text class="ylab" x="{padL-6}" y="{y+4:.1f}">{lab}</text>')
 
-    # подписи X
-    idxs = sorted(set([0, n - 1] + [round(n * f) for f in (0.25, 0.5, 0.75)]
-                      if n > 4 else range(n)))
-    for i in [i for i in idxs if 0 <= i < n]:
+    # подписи X — только первая/середина/последняя
+    for i in sorted({0, n // 2, n - 1}):
+        if not (0 <= i < n):
+            continue
         anc = "start" if i == 0 else ("end" if i == n - 1 else "middle")
-        P.append(f'<text class="xlab" x="{X(i):.1f}" y="{H-12}" '
+        P.append(f'<text class="xlab" x="{X(i):.1f}" y="{H-13}" '
                  f'style="text-anchor:{anc}">{html.escape(labels[i])}</text>')
 
     # маркеры событий (вертикальные пунктиры + метка)
@@ -240,16 +242,16 @@ def line_chart(chart_id, labels, series, unit="", area=False, y_int=False,
         poly = [f"{X(i):.1f},{Y(y):.1f}" for i, y in enumerate(pts) if y is not None]
         if len(poly) > 1:
             P.append(f'<polyline points="{" ".join(poly)}" fill="none" '
-                     f'style="stroke:var({v})" stroke-width="2" '
+                     f'style="stroke:var({v})" stroke-width="2.6" '
                      f'stroke-linejoin="round" stroke-linecap="round"/>')
         # конечная точка + прямая подпись
         real = [i for i, y in enumerate(pts) if y is not None]
         if real:
             li = real[-1]
-            P.append(f'<circle class="enddot" cx="{X(li):.1f}" cy="{Y(pts[li]):.1f}" r="3.5" '
+            P.append(f'<circle class="enddot" cx="{X(li):.1f}" cy="{Y(pts[li]):.1f}" r="4" '
                      f'style="fill:var({v})"/>')
             if end_labels:
-                P.append(f'<text class="endlab" x="{X(li)+7:.1f}" y="{Y(pts[li])+3.5:.1f}" '
+                P.append(f'<text class="endlab" x="{X(li)+6:.1f}" y="{Y(pts[li])+4:.1f}" '
                          f'style="fill:var({v})">{html.escape(s["name"])}</text>')
 
     # crosshair-слой + прозрачный hit-rect
@@ -316,7 +318,11 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .hint{color:var(--muted);font-weight:400;font-size:12px}
 .tiles{display:grid;gap:12px;margin-bottom:14px}
 .tiles.c5{grid-template-columns:repeat(5,1fr)} .tiles.c4{grid-template-columns:repeat(4,1fr)}
+.tiles.c2{grid-template-columns:repeat(2,1fr)}
 @media(max-width:820px){.tiles.c5,.tiles.c4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.tiles.c2{grid-template-columns:1fr}}
+.tile.big{padding:16px 18px}
+.tile.big .t-value{font-size:34px}
 .tile{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 15px}
 .t-label{color:var(--ink2);font-size:12.5px;margin-bottom:7px}
 .t-row{display:flex;align-items:flex-end;justify-content:space-between;gap:8px}
@@ -327,8 +333,8 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .d.flat{color:var(--muted);font-weight:500}
 .dd{display:inline-flex;gap:10px;font-size:11.5px;color:var(--muted);flex-wrap:wrap}
 .dd .good{color:var(--good);font-weight:640} .dd .bad{color:var(--bad);font-weight:640}
-.chart .evline{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;opacity:.55}
-.chart .evlab{fill:var(--muted);font-size:10px}
+.chart .evline{stroke:var(--muted);stroke-width:1.2;stroke-dasharray:3 3;opacity:.6}
+.chart .evlab{fill:var(--muted);font-size:13px}
 .alert{background:#fdecec;color:#8a1f1f;border:1px solid #f2b8b8;border-radius:14px;
   padding:12px 16px;margin-bottom:14px;font-size:13.5px;line-height:1.5}
 .alert b{font-weight:700}
@@ -382,11 +388,11 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .meter-fill{height:100%;border-radius:99px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:820px){.grid2{grid-template-columns:1fr}}
 .chartbox{position:relative}
-.chart{width:100%;height:auto;display:block;touch-action:none}
+.chart{width:100%;height:auto;display:block;touch-action:none;max-width:620px;margin:0 auto}
 .chart .grid{stroke:var(--grid);stroke-width:1}
-.chart .ylab,.chart .xlab{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.chart .ylab,.chart .xlab{fill:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
 .chart .ylab{text-anchor:end}.chart .xlab{text-anchor:middle}
-.chart .endlab{font-size:11px;font-weight:600}
+.chart .endlab{font-size:12.5px;font-weight:600}
 .chart .xh-line{stroke:var(--baseline);stroke-width:1}
 .chart .xh-dot{stroke:var(--surface);stroke-width:2}
 .legend{display:flex;gap:15px;flex-wrap:wrap;margin-bottom:6px}
