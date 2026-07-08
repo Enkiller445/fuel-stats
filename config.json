@@ -1,0 +1,16 @@
+{
+  "region_name": "Москва + ближнее Подмосковье",
+  "bbox": {
+    "lat_min": 55.30,
+    "lat_max": 56.05,
+    "lon_min": 36.90,
+    "lon_max": 38.05
+  },
+  "point_types": "8;10",
+  "price_fuels": ["АИ-92", "АИ-95", "АИ-98", "АИ-100", "ДТ"],
+  "gdebenz_grades": ["92", "95", "98", "100", "ДТ"],
+  "price_sane_min": 20.0,
+  "price_sane_max": 250.0,
+  "request_timeout_sec": 120,
+  "request_retries": 3
+}
