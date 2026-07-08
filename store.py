@@ -20,7 +20,7 @@ def _fieldnames(cfg):
     fn = ["ts_utc", "ts_msk", "azs_total", "azs_available"]
     for f in cfg.get("price_fuels", []):
         fn += [f"p_med_{f}", f"p_p10_{f}", f"p_p90_{f}", f"p_min_{f}",
-               f"p_max_{f}", f"p_n_{f}", f"p_navail_{f}"]
+               f"p_max_{f}", f"p_n_{f}", f"p_navail_{f}", f"p_fresh_{f}"]
     fn += ["gb_total", "gb_yes", "gb_no", "gb_queue", "gb_low", "gb_unknown"]
     for g in cfg.get("gdebenz_grades", []):
         fn += [f"gb_now_{g}"]
@@ -41,6 +41,7 @@ def build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary):
             row[f"p_max_{f}"] = d.get("max")
             row[f"p_n_{f}"] = d.get("n")
             row[f"p_navail_{f}"] = d.get("n_avail")
+            row[f"p_fresh_{f}"] = d.get("n_fresh")
     if gd_summary:
         row["gb_total"] = gd_summary["total"]
         row["gb_yes"] = gd_summary["n_yes"]
@@ -54,17 +55,29 @@ def build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary):
 
 
 def append_history(cfg, row):
+    """Дозаписать строку. При изменении схемы (напр. добавили колонку) файл
+    прозрачно мигрируется: новый заголовок = желаемые поля + существующие лишние
+    (чтобы не терять старые данные), старые строки добиваются пустыми значениями."""
     os.makedirs(DATA_DIR, exist_ok=True)
-    exists = os.path.exists(HISTORY)
-    if exists:
+    desired = _fieldnames(cfg)
+    if os.path.exists(HISTORY):
         with open(HISTORY, encoding="utf-8", newline="") as f:
-            fields = next(csv.reader(f))
+            existing = next(csv.reader(f), [])
+        fields = desired + [c for c in existing if c not in desired]
+        if fields != existing:                      # схема изменилась — мигрируем
+            with open(HISTORY, encoding="utf-8", newline="") as f:
+                old_rows = list(csv.DictReader(f))
+            with open(HISTORY, "w", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fields, restval="")
+                w.writeheader()
+                for r in old_rows:
+                    w.writerow({k: r.get(k, "") for k in fields})
     else:
-        fields = _fieldnames(cfg)
+        fields = desired
+        with open(HISTORY, "w", encoding="utf-8", newline="") as f:
+            csv.DictWriter(f, fieldnames=fields).writeheader()
     with open(HISTORY, "a", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore", restval="")
-        if not exists:
-            w.writeheader()
         w.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fields})
 
 

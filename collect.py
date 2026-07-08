@@ -15,6 +15,7 @@ import statistics
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 import xlrd
 
@@ -92,6 +93,16 @@ def _to_price(v):
         return None
 
 
+def _age_days(datestr, ref):
+    """Возраст цены в днях относительно ref (date). None если даты нет/не парсится."""
+    if not datestr:
+        return None
+    try:
+        return (ref - datetime.strptime(datestr.strip(), "%d.%m.%Y").date()).days
+    except Exception:
+        return None
+
+
 def station_key(rec):
     return "|".join([rec.get("brand", ""), rec.get("region", ""),
                      rec.get("city", ""), rec.get("address", "")]).lower()
@@ -131,6 +142,8 @@ def collect_prices(cfg):
     """
     fuels = cfg.get("price_fuels", ["АИ-95", "АИ-98"])
     lo, hi = cfg.get("price_sane_min", 20.0), cfg.get("price_sane_max", 250.0)
+    fresh_days = cfg.get("fresh_days", 14)
+    ref = datetime.now(timezone.utc).date()
 
     xls_all = fetch_report(cfg, available_only=False)
     xls_av = fetch_report(cfg, available_only=True)
@@ -143,9 +156,18 @@ def collect_prices(cfg):
     azs = [r for r in rows_all if r.get("type") == "АЗС"]
     azs_av = [r for r in azs if r["_available"]]
 
-    def sane(rows, fuel):
-        return [r.get(f"price_{fuel}") for r in rows
-                if r.get(f"price_{fuel}") is not None and lo <= r.get(f"price_{fuel}") <= hi]
+    def prices(rows, fuel):
+        """(все вменяемые цены, свежие цены ≤ fresh_days). Цену без даты в свежие не берём."""
+        allp, freshp = [], []
+        for r in rows:
+            p = r.get(f"price_{fuel}")
+            if p is None or not (lo <= p <= hi):
+                continue
+            allp.append(p)
+            age = _age_days(r.get(f"date_{fuel}"), ref)
+            if age is not None and age <= fresh_days:
+                freshp.append(p)
+        return allp, freshp
 
     summary = {
         "azs_total": len(azs),
@@ -153,8 +175,12 @@ def collect_prices(cfg):
         "fuels": {},
     }
     for fuel in fuels:
-        st = price_stats(sane(azs, fuel))
-        st["n_avail"] = len(sane(azs_av, fuel))
+        allp, freshp = prices(azs, fuel)
+        base = freshp if len(freshp) >= 5 else allp   # мало свежих — берём все
+        st = price_stats(base)
+        st["n"] = len(allp)                           # продают (все с ценой)
+        st["n_fresh"] = len(freshp)
+        st["n_avail"] = len(prices(azs_av, fuel)[0])  # доступные, продающие вид
         summary["fuels"][fuel] = st
 
     # последний снимок станций (компактно, для дашборда)

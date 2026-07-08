@@ -118,9 +118,11 @@ def build(base_dir, price_stations=None, gd_stations=None):
       {_gdebenz_brand_table(gd_stations)}</section>
 
     <p class="foot">Цена и «продают/транзакции идут» — petrolplus / АЗС-Локатор (выгрузка
-      StationList.xls); «транзакции идут» = доля АЗС с высокой доступностью среди продающих
-      этот вид. «Есть сейчас» — gdebenz.ru, краудсорс (наличие сообщают пользователи), оценка
-      «снизу». АИ-98/100 продаются на немногих АЗС — цены разреженные. Величины справочные.</p>
+      StationList.xls). Медиана считается по <b>свежим ценам</b> (обновлённым за последние 14
+      дней); если свежих мало — по всем. «Транзакции идут» = доля АЗС с высокой доступностью
+      среди продающих этот вид. «Есть сейчас» — gdebenz.ru, краудсорс (наличие сообщают
+      пользователи), оценка «снизу». АИ-98/100 продаются на немногих АЗС — данные разреженные.
+      Величины справочные.</p>
     """
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(viz.wrap(f"Бензин · {viz.short_dt(last['ts_msk'])}", body))
@@ -133,18 +135,21 @@ def _fuel_card(f, col, cur, pre):
     var = viz.FUEL_VAR[f]
     med = cur(f"p_med_{f}")
     n = _i(cur(f"p_n_{f}"))
+    fresh = _i(cur(f"p_fresh_{f}"))
     navail = _i(cur(f"p_navail_{f}"))
     now = _i(cur(f"gb_now_{g}"))
     share = viz.pct(navail or 0, n) if n else None
     spark = viz.sparkline(col(f"p_med_{f}"), var, w=92, h=28)
     price_arrow = viz.arrow(med, pre(f"p_med_{f}"), good_down=True, unit=" ₽")
     now_arrow = viz.arrow(now, pre(f"gb_now_{g}"), good_down=False)
+    psub = (f"по {viz.fmt(fresh)} свежим ценам" if fresh and fresh >= 5
+            else f"{viz.fmt(n)} АЗС · свежих мало")
     return f"""
     <div class="fuelcard" style="--accent:var({var})">
       <div class="fc-head"><span class="fc-dot" style="background:var({var})"></span>
         <span class="fc-name">{html.escape(f)}</span></div>
       <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>
-      <div class="fc-sub">{price_arrow} · {viz.fmt(n)} АЗС с ценой</div>
+      <div class="fc-sub">{price_arrow} · {psub}</div>
       <div class="fc-avail">
         <div class="fc-arow"><span class="lbl">Есть сейчас</span>
           <span class="num">{viz.fmt(now)} АЗС {now_arrow}</span></div>
@@ -185,25 +190,31 @@ def _price_brand_table(stations):
 def _gdebenz_brand_table(stations):
     if not stations:
         return "<div class='empty'>Снимок наличия появится после первого сбора</div>"
+    grades = [FUEL_TO_GRADE[f] for f in FUELS]   # 92,95,98,100,ДТ
     agg = {}
     for s in stations:
-        a = agg.setdefault(s.get("brand") or "—", {"n": 0, "yes": 0, "no": 0, "g95": 0, "g98": 0})
+        a = agg.setdefault(s.get("brand") or "—",
+                           {"n": 0, "yes": 0, "no": 0, **{g: 0 for g in grades}})
         a["n"] += 1
         st = s.get("status")
         a["yes"] += 1 if st == "yes" else 0
         a["no"] += 1 if st == "no" else 0
         fs = {x.strip() for x in (s.get("fuels_now") or "").split(",") if x.strip()}
-        a["g95"] += 1 if "95" in fs else 0
-        a["g98"] += 1 if "98" in fs else 0
+        for g in grades:
+            if g in fs:
+                a[g] += 1
+    ghead = "".join(f"<th>{html.escape('АИ-'+g if g != 'ДТ' else g)}</th>" for g in grades)
     trs = ""
     for b, a in sorted(agg.items(), key=lambda kv: -kv[1]["n"])[:15]:
         share = viz.pct(a["yes"], a["yes"] + a["no"])
+        cells = "".join(f'<td>{a[g] or "—"}</td>' for g in grades)
         trs += (f'<tr><td class="b">{html.escape(b)}</td><td>{a["n"]}</td>'
-                f'<td>{a["yes"]}</td><td>{a["no"]}</td><td>{viz.fmt(share)}%</td>'
-                f'<td>{a["g95"]}</td><td>{a["g98"]}</td></tr>')
+                f'<td>{a["yes"]}</td><td>{a["no"]}</td><td>{viz.fmt(share)}%</td>{cells}</tr>')
     return ('<div class="tablewrap"><table class="tbl"><thead><tr><th>Сеть</th><th>АЗС</th>'
-            '<th>Есть</th><th>Нет</th><th>Есть, %</th><th>95 сейчас</th><th>98 сейчас</th>'
-            '</tr></thead><tbody>' + trs + '</tbody></table></div>')
+            '<th>Есть</th><th>Нет</th><th>Есть, %</th>' + ghead +
+            '</tr></thead><tbody>' + trs + '</tbody></table>'
+            '<div class="fc-sub" style="margin-top:6px">Столбцы по видам — число АЗС, где марка '
+            'есть в наличии сейчас.</div></div>')
 
 
 def _banner(status):
