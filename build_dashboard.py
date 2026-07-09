@@ -80,6 +80,109 @@ def _av_pcts(r):
     return idx, gd, pp
 
 
+# ---------------------------------------------- Сводка по марке (ассистент) ---
+def _work_pct(hist, f):
+    n = _lv(hist, f"p_n_{f}")
+    nav = _lv(hist, f"p_navail_{f}")
+    return round(100 * nav / n) if (n and nav is not None) else None
+
+
+def _fuel_summary(f, hist, drows, cfg):
+    g = FUEL_TO_GRADE[f]
+    fresh = _lv(hist, f"p_fresh_{f}")
+    low = fresh is None or fresh < 15
+    work = _work_pct(hist, f)
+    spread = _lv(hist, f"net_spread_{f}")
+    spread_d7 = analytics.delta(hist, f"net_spread_{f}", 168)
+    price_d7 = analytics.delta(hist, f"p_med_{f}", 168)
+    now = _lv(hist, f"gb_now_{g}")
+    avail_d7 = analytics.delta(hist, f"gb_now_{g}", 168)
+    havg, _ = analytics.by_hour(hist, f"gb_now_{g}")
+    hh = [h for h in range(24) if havg[h] is not None]
+    best_hour = max(hh, key=lambda h: havg[h]) if len(hh) >= 6 else None
+    wd = analytics.by_weekday(drows, f"gb_now_{g}")
+    wdi = [i for i in range(7) if wd[i] is not None]
+    best_day = analytics.WEEKDAYS[max(wdi, key=lambda i: wd[i])] if len(wdi) >= 3 else None
+
+    # что происходит
+    if low:
+        level, state = "unknown", f"{f}: данных мало — оценка неточная."
+    elif work is None:
+        level, state = "unknown", f"{f}: данных пока нет."
+    elif work >= 88:
+        level, state = "ok", f"Спокойно: {f} есть на большинстве работающих АЗС."
+    elif work >= 74:
+        level, state = "warn", f"Умеренный дефицит {f}: есть не везде, местами лимиты."
+    else:
+        level, state = "crit", f"Острый дефицит {f}: найти сложно."
+    if spread is not None and spread >= 5 and not low:
+        state += " Независимые заметно дороже сетей — признак напряжённости."
+
+    # чего ждать
+    if low or avail_d7 is None:
+        trend = "Данных мало для тренда."
+    else:
+        thr = max(8, 0.06 * (now or 100))
+        a = ("Тренд на улучшение" if avail_d7 > thr else
+             "Ухудшение" if avail_d7 < -thr else "Стабильно")
+        pr = ("; цены растут" if (price_d7 or 0) > 0.2 else
+              "; цены снижаются" if (price_d7 or 0) < -0.2 else "; цены стабильны")
+        trend = a + pr + "."
+        note = cfg.get("normalization_note", "")
+        if note:
+            trend += f" Ориентир: {note}."
+
+    # что делать
+    if level == "ok" and (avail_d7 is None or avail_d7 >= -8):
+        act = "Заправляйтесь как обычно, спешки нет."
+    elif level == "unknown":
+        act = "Смотрите наличие по видам ниже."
+    else:
+        act = "Держите бак от 2/3, лучше залиться в ближайшие дни."
+    if best_day and best_hour is not None:
+        act += f" Оптимально: {best_day} около {best_hour:02d}:00."
+
+    # барометр (на «мало данных» спред по маркам недостоверен — глушим)
+    if low or spread is None:
+        b_level, b_text = "unknown", ("мало данных" if low else "нет данных")
+    elif spread < 3:
+        b_level, b_text = "ok", "Спокойно"
+    elif spread <= 6:
+        b_level, b_text = "warn", "Напряжённость"
+    else:
+        b_level, b_text = "crit", "Дефицит усиливается"
+    b_arrow = ("↑" if spread_d7 > 0 else "↓") if (spread_d7 is not None and abs(spread_d7) >= 0.1) else ""
+    return dict(level=level, state=state, trend=trend, action=act, low=low,
+               spread=spread, b_level=b_level, b_text=b_text, b_arrow=b_arrow)
+
+
+def _summary_blocks(hist, drows, cfg):
+    out = ""
+    for i, f in enumerate(FUELS):
+        s = _fuel_summary(f, hist, drows, cfg)
+        badge = ' <span class="ev-auto">мало данных</span>' if s["low"] else ""
+        sp = (f' · спред {viz.fmt(s["spread"]," ₽")} <span class="baro-arrow">{s["b_arrow"]}</span>'
+              if (s["spread"] is not None and not s["low"]) else "")
+        out += (f'<div class="fsum" data-fuel="{html.escape(f)}"{"" if i == 1 else " hidden"}>'
+                f'<div class="fs-row lvl-{s["level"]}"><span class="fs-ic"></span>'
+                f'<div><div class="fs-lbl">Что происходит</div><div class="fs-txt">{html.escape(s["state"])}</div></div></div>'
+                f'<div class="fs-row"><span class="fs-ic fs-ar">→</span>'
+                f'<div><div class="fs-lbl">Чего ждать</div><div class="fs-txt">{html.escape(s["trend"])}</div></div></div>'
+                f'<div class="fs-row"><span class="fs-ic fs-ok">✓</span>'
+                f'<div><div class="fs-lbl">Что делать</div><div class="fs-txt">{html.escape(s["action"])}</div></div></div>'
+                f'<div class="barometer bl-{s["b_level"]}">Барометр дефицита ({html.escape(f)}): '
+                f'<b>{s["b_text"]}</b>{sp}{badge}</div></div>')
+    return out
+
+
+def _fuel_selector():
+    btns = "".join(
+        f'<button class="fbtn{" on" if i == 1 else ""}" data-fuel="{html.escape(f)}" data-si="{i}" '
+        f'style="--c:var({viz.FUEL_VAR[f]})"><span class="fb-dot"></span>{html.escape(f)}</button>'
+        for i, f in enumerate(FUELS))
+    return f'<div class="fuelsel" role="tablist">{btns}</div>'
+
+
 def build(base_dir, price_stations=None, gd_stations=None):
     cfg = _cfg(base_dir)
     hist = store.load_history()
@@ -110,6 +213,9 @@ def build(base_dir, price_stations=None, gd_stations=None):
     body = "".join([
         _header(cfg, status, hist),
         _alerts(hist, cfg),
+        f'<div class="sec">Сводка по марке {viz.help_badge("Три вывода по ВЫБРАННОЙ марке из текущих данных: что происходит (по доле работающих АЗС и спреду цен), чего ждать (тренд за 7 дней), что делать. Переключайте марку кнопками — меняются сводка, карточки и акцент на графиках. На марках «мало данных» тренд не считается.")}</div>',
+        _fuel_selector(),
+        _summary_blocks(hist, drows, cfg),
         _hero(hist, cur, drows),
         f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду. Цена — petrolplus. «Продают» — сколько АЗС в рамке продают вид. «Из них работают %» — доля этих АЗС с высокой доступностью (petrolplus: идут транзакции → топливо реально отпускается; надёжный сигнал «есть», знаменатель именно продающие вид, а не все). «gdebenz: есть на N» — независимое краудсорс-подтверждение наличия. Общая работоспособность всех АЗС (не по видам) — в «Доступности топлива» выше.", _v_fuel_avail(hist))}</div>',
         f'<div class="fuelgrid">{"".join(_fuel_card(f, hist, cur, drows) for f in FUELS)}</div>',
@@ -232,7 +338,7 @@ def _fuel_card(f, hist, cur, drows):
     low = fresh is None or fresh < 15       # разреженная статистика цены
     badge = ' <span class="ev-auto" title="цена по малому числу свежих АЗС — шумно">мало данных</span>' if low else ""
     return f"""
-    <div class="fuelcard" style="--accent:var({var})">
+    <div class="fuelcard" data-fuel="{html.escape(f)}" style="--accent:var({var})">
       <div class="fc-head"><span class="fc-dot" style="background:var({var})"></span>
         <span class="fc-name">{html.escape(f)}</span>{badge}</div>
       <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>

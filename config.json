@@ -22,5 +22,6 @@
     "price_day_rise_pct": 3.0
   },
   "show_events": false,
+  "normalization_note": "",
   "event_queries": ["дефицит бензина", "лимит на бензин АЗС", "цены на бензин Москва", "атака НПЗ топливо"]
 }

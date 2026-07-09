@@ -24,6 +24,8 @@ def _fieldnames(cfg):
     fn += ["gb_total", "gb_yes", "gb_no", "gb_queue", "gb_low", "gb_unknown"]
     for g in cfg.get("gdebenz_grades", []):
         fn += [f"gb_now_{g}"]
+    for f in cfg.get("price_fuels", []):
+        fn += [f"net_net_{f}", f"net_indep_{f}", f"net_spread_{f}"]
     fn += ["net95_med", "net95_n", "indep95_med", "indep95_n", "spread95"]
     for nw in cfg.get("tracked_networks", []):
         fn += [f"net95_{nw}"]
@@ -46,12 +48,19 @@ def build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary):
             row[f"p_navail_{f}"] = d.get("n_avail")
             row[f"p_fresh_{f}"] = d.get("n_fresh")
         net = price_summary.get("net") or {}
-        row["net95_med"] = net.get("med_net")
-        row["net95_n"] = net.get("n_net")
-        row["indep95_med"] = net.get("med_indep")
-        row["indep95_n"] = net.get("n_indep")
-        row["spread95"] = net.get("spread")
-        for nw, med in (net.get("by") or {}).items():
+        pf = net.get("per_fuel", {})
+        for f in cfg.get("price_fuels", []):
+            d = pf.get(f, {})
+            row[f"net_net_{f}"] = d.get("net")
+            row[f"net_indep_{f}"] = d.get("indep")
+            row[f"net_spread_{f}"] = d.get("spread")
+        d95 = pf.get("АИ-95", {})
+        row["net95_med"] = d95.get("net")
+        row["net95_n"] = d95.get("n_net")
+        row["indep95_med"] = d95.get("indep")
+        row["indep95_n"] = d95.get("n_indep")
+        row["spread95"] = d95.get("spread")
+        for nw, med in (net.get("by95") or {}).items():
             row[f"net95_{nw}"] = med
     if gd_summary:
         row["gb_total"] = gd_summary["total"]

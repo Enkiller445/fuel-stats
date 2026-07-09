@@ -350,6 +350,32 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .fresh .fbadge b{color:var(--ink);font-variant-numeric:tabular-nums}
 .fresh .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 .fresh .fdays{color:var(--muted);font-size:12px}
+.fuelsel{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.fbtn{display:inline-flex;align-items:center;gap:6px;border:1.5px solid var(--border);
+  background:var(--surface);color:var(--ink2);border-radius:999px;padding:7px 14px;
+  font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+.fbtn .fb-dot{width:9px;height:9px;border-radius:50%;background:var(--c)}
+.fbtn.on{border-color:var(--c);color:var(--ink);box-shadow:inset 0 0 0 1px var(--c)}
+.fbtn:hover{border-color:var(--c)}
+.fsum{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+  padding:14px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.fs-row{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border)}
+.fs-row:last-of-type{border-bottom:0}
+.fs-ic{flex:0 0 auto;width:22px;height:22px;border-radius:50%;display:inline-flex;
+  align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;
+  background:var(--muted);margin-top:2px}
+.fs-row.lvl-ok .fs-ic{background:var(--st-good)} .fs-row.lvl-warn .fs-ic{background:var(--st-warn)}
+.fs-row.lvl-crit .fs-ic{background:var(--st-crit)} .fs-row.lvl-unknown .fs-ic{background:var(--muted)}
+.fs-ic.fs-ar,.fs-ic.fs-ok{background:var(--ink2)}
+.fs-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+.fs-txt{font-size:15px;line-height:1.45;font-weight:500}
+.barometer{margin-top:10px;padding:9px 12px;border-radius:10px;font-size:13.5px;
+  background:rgba(127,127,127,.08)}
+.barometer.bl-ok{background:rgba(12,163,12,.13)} .barometer.bl-warn{background:rgba(224,146,10,.15)}
+.barometer.bl-crit{background:rgba(208,59,59,.15)}
+.baro-arrow{font-weight:700}
+.fuelcard.fc-active{outline:2px solid var(--accent);outline-offset:1px}
+.ser.ser-dim{opacity:.16}
 .stat-row{display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);margin:0 0 16px}
 .stat-row b{color:var(--ink);font-variant-numeric:tabular-nums}
 .events{list-style:none;padding:0;margin:4px 0 0;font-size:13px}
@@ -497,6 +523,21 @@ _SCRIPT = """
   document.addEventListener('click',function(){
     document.querySelectorAll('.help.open').forEach(function(h){h.classList.remove('open');});
   });
+  // глобальный селектор марки: меняет сводку, карточки и акцент на графиках
+  function selectFuel(f,si){
+    document.querySelectorAll('.fbtn').forEach(function(b){b.classList.toggle('on',b.dataset.fuel===f);});
+    document.querySelectorAll('.fsum').forEach(function(s){s.hidden=s.dataset.fuel!==f;});
+    document.querySelectorAll('.fuelcard').forEach(function(c){c.classList.toggle('fc-active',c.dataset.fuel===f);});
+    ['pxday','availfuel'].forEach(function(cid){
+      document.querySelectorAll('.ser[data-cid="'+cid+'"]').forEach(function(g){
+        g.classList.toggle('ser-dim',g.getAttribute('data-si')!==si);
+      });
+    });
+  }
+  document.querySelectorAll('.fbtn').forEach(function(b){
+    b.addEventListener('click',function(){selectFuel(b.dataset.fuel,b.dataset.si);});
+  });
+  var _def=document.querySelector('.fbtn.on'); if(_def) selectFuel(_def.dataset.fuel,_def.dataset.si);
   // переключатель линий в легенде: клик — скрыть/показать серию
   document.querySelectorAll('.lg.tog').forEach(function(el){
     el.addEventListener('click',function(){

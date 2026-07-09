@@ -134,44 +134,44 @@ def price_stats(values):
     )
 
 
-def _network_breakdown(azs, cfg, lo, hi, fresh_days, ref, head="АИ-95"):
-    """Медианы цены АИ-95: сети (ВИНК) vs независимые + по отслеживаемым сетям."""
+def _network_breakdown(azs, cfg, lo, hi, fresh_days, ref):
+    """Сети (ВИНК) vs независимые + спред по КАЖДОЙ марке; по отслеживаемым сетям — для АИ-95."""
     majors_l = [m.lower() for m in cfg.get("majors", [])]
     tracked = cfg.get("tracked_networks", [])
-
-    def pairs_fresh():
-        out = []
-        for r in azs:
-            p = r.get(f"price_{head}")
-            if p is None or not (lo <= p <= hi):
-                continue
-            age = _age_days(r.get(f"date_{head}"), ref)
-            if age is not None and age <= fresh_days:
-                out.append((r.get("brand") or "", p))
-        return out
-
-    pairs = pairs_fresh()
-    if len(pairs) < 5:                                  # мало свежих — все вменяемые
-        pairs = [(r.get("brand") or "", r.get(f"price_{head}")) for r in azs
-                 if r.get(f"price_{head}") is not None and lo <= r.get(f"price_{head}") <= hi]
+    fuels = cfg.get("price_fuels", [])
 
     def is_major(b):
         bl = b.lower()
         return any(m in bl for m in majors_l)
 
-    net_p = [p for b, p in pairs if is_major(b)]
-    indep_p = [p for b, p in pairs if not is_major(b)]
-    med_net = price_stats(net_p)["median"]
-    med_indep = price_stats(indep_p)["median"]
-    out = {"med_net": med_net, "n_net": len(net_p),
-           "med_indep": med_indep, "n_indep": len(indep_p),
-           "spread": (round(med_indep - med_net, 2)
-                      if med_net is not None and med_indep is not None else None),
-           "by": {}}
+    def pairs(head):
+        fresh, allp = [], []
+        for r in azs:
+            p = r.get(f"price_{head}")
+            if p is None or not (lo <= p <= hi):
+                continue
+            b = r.get("brand") or ""
+            allp.append((b, p))
+            if (_age_days(r.get(f"date_{head}"), ref) or 999) <= fresh_days:
+                fresh.append((b, p))
+        return fresh if len(fresh) >= 5 else allp
+
+    per_fuel = {}
+    for f in fuels:
+        ps = pairs(f)
+        net_p = [p for b, p in ps if is_major(b)]
+        indep_p = [p for b, p in ps if not is_major(b)]
+        mn = price_stats(net_p)["median"]
+        mi = price_stats(indep_p)["median"]
+        per_fuel[f] = {"net": mn, "indep": mi, "n_net": len(net_p), "n_indep": len(indep_p),
+                       "spread": (round(mi - mn, 2) if mn is not None and mi is not None else None)}
+
+    by95 = {}
+    ps95 = pairs("АИ-95")
     for nw in tracked:
         nwl = nw.lower()
-        out["by"][nw] = price_stats([p for b, p in pairs if nwl in b.lower()])["median"]
-    return out
+        by95[nw] = price_stats([p for b, p in ps95 if nwl in b.lower()])["median"]
+    return {"per_fuel": per_fuel, "by95": by95}
 
 
 def collect_prices(cfg):
