@@ -58,16 +58,22 @@ export interface Overall {
   gbLow: Num;
 }
 
+export type BrandKind = "petrol" | "gas" | "none";
+
 export interface BrandPrice {
   brand: string;
   n: number;
+  kind: BrandKind;
   prices: Record<string, Num>;
 }
 
 export interface BrandGd {
   brand: string;
   n: number;
-  yes: number;
+  resp: number; // ответивших (есть+нет+очередь+лимит)
+  yes: number; // «есть» (вкл. очередь/лимит)
+  availPct: Num; // yes / resp — без неизвестных
+  kind: BrandKind;
   byFuel: Record<string, number>;
 }
 

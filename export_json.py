@@ -187,22 +187,38 @@ def _alerts_list(hist, cfg):
     return out
 
 
+def _classify(brand_canon):
+    """petrol | gas | none — газовые АЗС и нераспознанные вынести из бензиновых сетей."""
+    if brand_canon == "Без бренда":
+        return "none"
+    if "(газ)" in brand_canon:
+        return "gas"
+    return "petrol"
+
+
 def _brands_price(stations, tot):
+    """Медианы цен по бензиновым сетям. Газовые АЗС исключены (их цены — не бензин).
+    «Без бренда» показываем отдельной приглушённой строкой."""
     if not stations:
         return []
     agg = {}
     for s in stations:
-        a = agg.setdefault(bd._norm_brand(s.get("brand")), {"n": 0, "p": {f: [] for f in FUELS}})
+        b = bd._norm_brand(s.get("brand"))
+        if _classify(b) == "gas":
+            continue  # газовые в бензиновую таблицу цен не мешаем
+        a = agg.setdefault(b, {"n": 0, "p": {f: [] for f in FUELS}})
         a["n"] += 1
         for f in FUELS:
             v = (s.get("prices") or {}).get(f)
             if v is not None:
                 a["p"][f].append(v)
-    out = []
-    for b, a in sorted(agg.items(), key=lambda kv: -kv[1]["n"])[:15]:
-        out.append({"brand": b, "n": a["n"],
-                    "prices": {f: (round(median(a["p"][f]), 2) if a["p"][f] else None) for f in FUELS}})
-    return out
+    rows = [{"brand": b, "n": a["n"], "kind": _classify(b),
+             "prices": {f: (round(median(a["p"][f]), 2) if a["p"][f] else None) for f in FUELS}}
+            for b, a in agg.items()]
+    # бензиновые сети по величине парка, «Без бренда» — в конец
+    petrol = sorted([r for r in rows if r["kind"] == "petrol"], key=lambda r: -r["n"])[:12]
+    none = sorted([r for r in rows if r["kind"] == "none"], key=lambda r: -r["n"])
+    return petrol + none
 
 
 def _geo(stations):
@@ -233,23 +249,57 @@ def _geo(stations):
 
 
 def _brands_gd(stations):
+    """Наличие по сетям (gdebenz). «Есть %» = (есть+очередь+лимит)/(ответившие),
+    неизвестные НЕ в знаменателе. Показываем сколько ответили из скольких точек.
+    Газовые и «Без бренда» — отдельными приглушёнными строками."""
     if not stations:
         return []
     grades = [G[f] for f in FUELS]
+    yesish = {"yes", "queue", "low"}
+    resp_set = {"yes", "no", "queue", "low"}
+
+    def newrec():
+        return {"n": 0, "resp": 0, "yes": 0, **{g: 0 for g in grades}}
+
     agg = {}
     for s in stations:
-        a = agg.setdefault(bd._norm_brand(s.get("brand")), {"n": 0, "yes": 0, **{g: 0 for g in grades}})
+        b = bd._norm_brand(s.get("brand"))
+        a = agg.setdefault(b, newrec())
         a["n"] += 1
-        a["yes"] += 1 if s.get("status") == "yes" else 0
+        stt = s.get("status")
+        if stt in resp_set:
+            a["resp"] += 1
+        if stt in yesish:
+            a["yes"] += 1  # «есть» (в т.ч. с трудом)
         fs = {x.strip() for x in (s.get("fuels_now") or "").split(",") if x.strip()}
         for g in grades:
             if g in fs:
                 a[g] += 1
-    out = []
-    for b, a in sorted(agg.items(), key=lambda kv: -kv[1]["n"])[:15]:
-        out.append({"brand": b, "n": a["n"], "yes": a["yes"],
-                    "byFuel": {G[f]: a[G[f]] for f in FUELS}})
-    return out
+
+    def mkrow(b, a):
+        return {"brand": b, "n": a["n"], "resp": a["resp"], "yes": a["yes"],
+                "kind": _classify(b),
+                "availPct": round(100 * a["yes"] / a["resp"]) if a["resp"] else None,
+                "byFuel": {G[f]: a[G[f]] for f in FUELS}}
+
+    rows = [mkrow(b, a) for b, a in agg.items()]
+    petrol = sorted([r for r in rows if r["kind"] == "petrol"], key=lambda r: -r["n"])[:12]
+    # газовые и «без бренда» — сводим каждую в одну строку, чтобы не засоряли рейтинг
+    def consolidate(kind, label):
+        grp = [a for b, a in agg.items() if _classify(b) == kind]
+        if not grp:
+            return None
+        tot = newrec()
+        for a in grp:
+            tot["n"] += a["n"]; tot["resp"] += a["resp"]; tot["yes"] += a["yes"]
+            for g in grades:
+                tot[g] += a[g]
+        row = mkrow(label, tot)
+        row["kind"] = kind  # метка «Газовые…» не содержит «(газ)» — задаём явно
+        return row
+    tail = [r for r in (consolidate("gas", f"Газовые (АГЗС · {sum(1 for b in agg if _classify(b)=='gas')})"),
+                        consolidate("none", "Без бренда")) if r]
+    return petrol + tail
 
 
 if __name__ == "__main__":

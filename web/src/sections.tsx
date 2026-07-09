@@ -421,18 +421,29 @@ function Capt({ children, help }: { children: ReactNode; help?: ReactNode }) {
 // ------------------------------------------------------------- Brand tables
 export function BrandTables({ d }: { d: Data }) {
   if (!d.brandsPrice.length && !d.brandsGd.length) return null;
+  const dimKind = (k: string) => k !== "petrol";
   return (
     <>
-      <SectionTitle>По брендам</SectionTitle>
+      <SectionTitle
+        help={
+          <Help title="Две разные базы АЗС">
+            Слева — petrolplus (цены), справа — gdebenz (наличие, краудсорс). Это <b>разные наборы</b> АЗС:
+            число точек по одной сети не совпадает, поэтому построчно сети между таблицами не сравнивайте.
+            Газовые АЗС (АГЗС/пропан) и нераспознанные бренды вынесены отдельными строками, чтобы не искажать бензиновые сети.
+          </Help>
+        }
+      >
+        По брендам
+      </SectionTitle>
       <div className="grid gap-3 lg:grid-cols-2">
         {d.brandsPrice.length > 0 && (
           <Card>
-            <Capt>Медианы цен, ₽</Capt>
+            <Capt>Медианы цен по бензиновым сетям, ₽ · petrolplus</Capt>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ color: "var(--muted)" }}>
-                    <th className="pb-1 text-left font-medium">Бренд</th>
+                    <th className="pb-1 text-left font-medium">Сеть</th>
                     {d.fuels.map((f) => (
                       <th key={f} className="pb-1 text-right font-medium" style={{ color: fuelVar(d.byFuel[f].color) }}>
                         {f.replace("АИ-", "")}
@@ -442,7 +453,7 @@ export function BrandTables({ d }: { d: Data }) {
                 </thead>
                 <tbody>
                   {d.brandsPrice.map((b) => (
-                    <tr key={b.brand} className="border-t" style={{ borderColor: "var(--border)" }}>
+                    <tr key={b.brand} className="border-t" style={{ borderColor: "var(--border)", opacity: dimKind(b.kind) ? 0.6 : 1 }}>
                       <td className="py-1">{b.brand} <span style={{ color: "var(--muted)" }}>· {b.n}</span></td>
                       {d.fuels.map((f) => (
                         <td key={f} className="py-1 text-right tnum">
@@ -454,17 +465,23 @@ export function BrandTables({ d }: { d: Data }) {
                 </tbody>
               </table>
             </div>
+            <div className="mt-2 text-[11px]" style={{ color: "var(--muted)" }}>
+              Газовые АЗС исключены (их цены — не бензин). 98/100 по сетям — мало точек, значения ориентировочные.
+            </div>
           </Card>
         )}
         {d.brandsGd.length > 0 && (
           <Card>
-            <Capt>gdebenz: «есть» по маркам</Capt>
+            <Capt help={<Help title="Есть %">Считается как «есть» ÷ «ответившие» (есть+нет+очередь+лимит). Точки без данных в знаменатель НЕ идут — иначе процент занижается. Рядом — сколько АЗС ответили из скольких.</Help>}>
+              Наличие по сетям · gdebenz
+            </Capt>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ color: "var(--muted)" }}>
-                    <th className="pb-1 text-left font-medium">Бренд</th>
-                    <th className="pb-1 text-right font-medium">Точек</th>
+                    <th className="pb-1 text-left font-medium">Сеть</th>
+                    <th className="pb-1 text-right font-medium">Есть %</th>
+                    <th className="pb-1 text-right font-medium">Ответили</th>
                     {d.fuels.map((f) => (
                       <th key={f} className="pb-1 text-right font-medium" style={{ color: fuelVar(d.byFuel[f].color) }}>
                         {f.replace("АИ-", "")}
@@ -474,9 +491,14 @@ export function BrandTables({ d }: { d: Data }) {
                 </thead>
                 <tbody>
                   {d.brandsGd.map((b) => (
-                    <tr key={b.brand} className="border-t" style={{ borderColor: "var(--border)" }}>
+                    <tr key={b.brand} className="border-t" style={{ borderColor: "var(--border)", opacity: dimKind(b.kind) ? 0.6 : 1 }}>
                       <td className="py-1">{b.brand}</td>
-                      <td className="py-1 text-right tnum">{b.n}</td>
+                      <td className="py-1 text-right font-semibold tnum" style={{ color: availColor(b.availPct) }}>
+                        {b.availPct != null ? `${b.availPct}%` : "—"}
+                      </td>
+                      <td className="py-1 text-right tnum" style={{ color: "var(--muted)" }}>
+                        {b.resp}/{b.n}
+                      </td>
                       {d.fuels.map((f) => (
                         <td key={f} className="py-1 text-right tnum">
                           {b.byFuel[d.byFuel[f].grade] ?? 0}
@@ -487,11 +509,22 @@ export function BrandTables({ d }: { d: Data }) {
                 </tbody>
               </table>
             </div>
+            <div className="mt-2 text-[11px]" style={{ color: "var(--muted)" }}>
+              «Ответили N/M» — у части точек статус неизвестен; их исключаем из «Есть %».
+            </div>
           </Card>
         )}
       </div>
     </>
   );
+}
+
+function availColor(pct: number | null): string {
+  if (pct == null) return "var(--muted)";
+  if (pct >= 80) return "var(--good)";
+  if (pct >= 60) return "var(--warn)";
+  if (pct >= 40) return "var(--serious)";
+  return "var(--crit)";
 }
 
 // -------------------------------------------------------------- Alerts + Footer
