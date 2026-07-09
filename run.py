@@ -25,6 +25,7 @@ import store
 import collect
 import collect_gdebenz
 import build_dashboard
+import export_json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -97,10 +98,19 @@ def main():
     status["region"] = cfg.get("region_name")
     store.write_json(store.STATUS, status)
 
-    # 4) Дашборд (снимки станций передаём из памяти, на диск не сохраняем)
+    # 4) Дашборд-legacy (public/index.html) — оставляем до полного перехода на React
     out = build_dashboard.build(BASE_DIR, price_stations=price_stations,
                                 gd_stations=gd_stations)
-    print("  Дашборд собран:", out)
+    print("  Дашборд (legacy) собран:", out)
+
+    # 4b) data.json для нового React-дашборда (web/). Снимки станций — из памяти.
+    try:
+        dj = export_json.write(BASE_DIR, price_stations=price_stations,
+                               gd_stations=gd_stations)
+        print("  data.json собран:", dj)
+    except Exception as e:
+        print("  data.json: ОШИБКА:", e)
+        traceback.print_exc()
 
     # Ненулевой код выхода только если ОБА источника упали (для сигнала в CI)
     if not price_summary and not gd_summary:
