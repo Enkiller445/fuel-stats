@@ -160,7 +160,7 @@ def _summary_blocks(hist, drows, cfg):
     out = ""
     for i, f in enumerate(FUELS):
         s = _fuel_summary(f, hist, drows, cfg)
-        badge = ' <span class="ev-auto">мало данных</span>' if s["low"] else ""
+        badge = ""
         sp = (f' · спред {viz.fmt(s["spread"]," ₽")} <span class="baro-arrow">{s["b_arrow"]}</span>'
               if (s["spread"] is not None and not s["low"]) else "")
         out += (f'<div class="fsum" data-fuel="{html.escape(f)}"{"" if i == 1 else " hidden"}>'
