@@ -65,19 +65,21 @@ def _norm_brand(name):
     return s.title() if s.isupper() else s
 
 
-# --- объединённая доступность: gdebenz «есть» + petrolplus «транзакции» ---
+# --- ДВА разнородных показателя доступности, НЕ усредняем ---
 def _av_pcts(r):
-    y = analytics._val(r, "gb_yes")
-    den = sum(x for x in (analytics._val(r, "gb_yes"), analytics._val(r, "gb_no"),
-                          analytics._val(r, "gb_queue"), analytics._val(r, "gb_low"))
-              if x is not None)
-    gd = round(100 * y / den, 1) if (y is not None and den) else None
-    tot = analytics._val(r, "azs_total")
-    av = analytics._val(r, "azs_available")
-    pp = round(100 * av / tot, 1) if (av is not None and tot) else None
-    vals = [v for v in (gd, pp) if v is not None]
-    idx = round(sum(vals) / len(vals), 1) if vals else None
-    return idx, gd, pp
+    """Возвращает (work_pp, gd_bal):
+    work_pp  — доля работающих АЗС (petrolplus, ПОЛНАЯ база) — честная станционная доступность.
+    gd_bal   — БАЛАНС сообщений gdebenz: (есть+очередь+мало)/(все ответившие). Очередь/мало = топливо
+               ЕСТЬ (с трудом), поэтому в «есть». Это оценка «снизу» (краудсорс смещён к жалобам),
+               подписывается как «баланс сообщений», не как «доступность»."""
+    y = analytics._val(r, "gb_yes"); no = analytics._val(r, "gb_no")
+    q = analytics._val(r, "gb_queue"); low = analytics._val(r, "gb_low")
+    resp = sum(x for x in (y, no, q, low) if x is not None)
+    pos = sum(x for x in (y, q, low) if x is not None)
+    gd_bal = round(100 * pos / resp, 1) if resp else None
+    tot = analytics._val(r, "azs_total"); av = analytics._val(r, "azs_available")
+    work_pp = round(100 * av / tot, 1) if (av is not None and tot) else None
+    return work_pp, gd_bal
 
 
 # ---------------------------------------------- Сводка по марке (ассистент) ---
@@ -92,15 +94,17 @@ def _fuel_summary(f, hist, drows, cfg):
     fresh = _lv(hist, f"p_fresh_{f}")
     low = fresh is None or fresh < 15
     work = _work_pct(hist, f)
+    n_sell = _lv(hist, f"p_n_{f}")
     spread = _lv(hist, f"net_spread_{f}")
-    spread_d7 = analytics.delta(hist, f"net_spread_{f}", 168)
-    price_d7 = analytics.delta(hist, f"p_med_{f}", 168)
-    now = _lv(hist, f"gb_now_{g}")
-    avail_d7 = analytics.delta(hist, f"gb_now_{g}", 168)
-    havg, _ = analytics.by_hour(hist, f"gb_now_{g}")
+    spread_d7 = analytics.daily_delta(drows, f"net_spread_{f}", 7)
+    price_d7 = analytics.daily_delta(drows, f"p_med_{f}", 7)
+    # тренд доступности вида — по petrolplus (полная база), не по смещённому краудсорсу
+    avail_d7 = analytics.daily_delta(drows, f"p_navail_{f}", 7)
+    # лучшее время — глобально по petrolplus (полная база), одинаково для всех марок
+    havg, _ = analytics.by_hour(hist, "azs_available")
     hh = [h for h in range(24) if havg[h] is not None]
     best_hour = max(hh, key=lambda h: havg[h]) if len(hh) >= 6 else None
-    wd = analytics.by_weekday(drows, f"gb_now_{g}")
+    wd = analytics.by_weekday(drows, "azs_available")
     wdi = [i for i in range(7) if wd[i] is not None]
     best_day = analytics.WEEKDAYS[max(wdi, key=lambda i: wd[i])] if len(wdi) >= 3 else None
 
@@ -122,7 +126,7 @@ def _fuel_summary(f, hist, drows, cfg):
     if low or avail_d7 is None:
         trend = "Данных мало для тренда."
     else:
-        thr = max(8, 0.06 * (now or 100))
+        thr = max(10, 0.04 * (n_sell or 300))
         a = ("Тренд на улучшение" if avail_d7 > thr else
              "Ухудшение" if avail_d7 < -thr else "Стабильно")
         pr = ("; цены растут" if (price_d7 or 0) > 0.2 else
@@ -199,10 +203,10 @@ def build(base_dir, price_stations=None, gd_stations=None):
             f.write(viz.wrap("Бензин · дашборд", "<p class='empty'>Данных ещё нет.</p>"))
         return out_path
 
-    # объединённый индекс доступности — в каждую строку истории (для трендов и дельт)
+    # два раздельных показателя — в каждую строку истории (для трендов и дельт)
     for r in hist:
-        idx, gd, pp = _av_pcts(r)
-        r["avail_idx"], r["avail_gd"], r["avail_pp"] = idx, gd, pp
+        pp, gd = _av_pcts(r)
+        r["work_pp"], r["gd_bal"] = pp, gd
 
     last = hist[-1]
     cur = lambda c: analytics._val(last, c)
@@ -217,7 +221,7 @@ def build(base_dir, price_stations=None, gd_stations=None):
         _fuel_selector(),
         _summary_blocks(hist, drows, cfg),
         _hero(hist, cur, drows),
-        f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду. Цена — petrolplus. «Продают» — сколько АЗС в рамке продают вид. «Из них работают %» — доля этих АЗС с высокой доступностью (petrolplus: идут транзакции → топливо реально отпускается; надёжный сигнал «есть», знаменатель именно продающие вид, а не все). «gdebenz: есть на N» — независимое краудсорс-подтверждение наличия. Общая работоспособность всех АЗС (не по видам) — в «Доступности топлива» выше.", _v_fuel_avail(hist))}</div>',
+        f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду. Цена — petrolplus. «Продают» — сколько АЗС продают вид. «Из них станция работает %» — доля продающих АЗС, где идут транзакции (petrolplus). ВАЖНО: это СТАНЦИОННЫЙ сигнал (станция вообще торгует), не гарантия именно этого вида — работающая АЗС обычно отпускает все свои виды, но не всегда. «gdebenz (сообщений «есть»)» — сколько пользователей отметили наличие (краудсорс, оценка снизу). Это разные метрики, не смешивать.", _v_fuel_avail(hist))}</div>',
         f'<div class="fuelgrid">{"".join(_fuel_card(f, hist, cur, drows) for f in FUELS)}</div>',
         _availability_chart(cfg, hist, drows, dlabels),
         _price_charts(cfg, hist, days, drows, dlabels, events + auto_events),
@@ -275,7 +279,7 @@ def _alerts(hist, cfg):
     yes = analytics._val(hist[-1], "gb_yes")
     ymin = al.get("avail_yes_min")
     if yes is not None and ymin is not None and yes < ymin:
-        msgs.append(f"Наличие низкое: <b>{int(yes)}</b> АЗС «есть» (порог {int(ymin)}).")
+        msgs.append(f"Мало сообщений «есть»: <b>{int(yes)}</b> (порог {int(ymin)}) — возможен дефицит.")
     thr = al.get("price_day_rise_pct")
     d = analytics.delta(hist, "p_med_АИ-95", 24)
     base = analytics.value_at_ago(hist, "p_med_АИ-95", 24)
@@ -289,16 +293,18 @@ def _hero(hist, cur, drows):
     price_tile = _tile(
         "Медиана цены АИ-95", viz.fmt(cur("p_med_АИ-95"), " ₽"),
         viz.sparkline(analytics.col(drows, "p_med_АИ-95"), "--f95", w=120, h=38),
-        _dd(hist, "p_med_АИ-95", " ₽", good_down=True),
-        viz.help_badge("Медианная цена АИ-95 по всем АЗС в рамке (устойчивее среднего к выбросам).",
+        _dd(drows, "p_med_АИ-95", " ₽", good_down=True),
+        viz.help_badge("Медианная цена АИ-95 по всем АЗС в рамке (устойчивее среднего к выбросам). "
+                       "Изменение — по дневной выборке (тот же час к тому же часу).",
                        _v_price95(hist)))
     av_tile = _tile(
-        "Доступность топлива", viz.fmt(cur("avail_idx"), " %"),
-        viz.sparkline(analytics.col(drows, "avail_idx"), viz.ST_GOOD, w=120, h=38),
-        _dd(hist, "avail_idx", " %", good_down=False),
-        viz.help_badge("Единый индекс из ДВУХ источников: «есть бензин» по gdebenz (краудсорс) и "
-                       "«идут транзакции» по petrolplus (АЗС-Локатор). Среднее двух — насколько "
-                       "реально заправиться. 100% = везде доступно.", _v_avail_index(hist)))
+        "Работающих АЗС", viz.fmt(cur("work_pp"), " %"),
+        viz.sparkline(analytics.col(drows, "work_pp"), viz.ST_GOOD, w=120, h=38),
+        _dd(drows, "work_pp", " %", good_down=False),
+        viz.help_badge("Доля всех АЗС, где идут транзакции (petrolplus, ПОЛНАЯ база) — честная "
+                       "станционная доступность (не по видам). Отдельно ниже — «баланс сообщений» "
+                       "по gdebenz (краудсорс, оценка снизу); их НЕ усредняем — это разные вещи.",
+                       _v_work(hist)))
     return f'<div class="tiles c2">{price_tile}{av_tile}</div>'
 
 
@@ -308,10 +314,11 @@ def _tile(label, value, spark, dd, help_html):
             f'<div class="t-delta">{dd}</div></div>')
 
 
-def _dd(hist, col_name, unit="", good_down=True):
+def _dd(drows, col_name, unit="", good_down=True):
+    # дельты строго по дневной выборке (тот же час), не «ближайший замер»
     parts = []
-    for lbl, hrs in (("24ч", 24), ("7д", 168)):
-        d = analytics.delta(hist, col_name, hrs)
+    for lbl, days in (("сут", 1), ("нед", 7)):
+        d = analytics.daily_delta(drows, col_name, days)
         if d is None:
             parts.append(f'<span>{lbl} —</span>')
         elif abs(d) < 1e-9:
@@ -344,9 +351,9 @@ def _fuel_card(f, hist, cur, drows):
       <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>
       <div class="fc-avail">
         <div class="fc-arow"><span class="lbl">Продают</span><span class="num">{viz.fmt(n)} АЗС</span></div>
-        <div class="fc-arow"><span class="lbl">Из них работают</span><span class="num">{viz.fmt(share)}%</span></div>
+        <div class="fc-arow"><span class="lbl">Из них станция работает</span><span class="num">{viz.fmt(share)}%</span></div>
         {viz.meter(share, viz.ST_GOOD)}
-        <div class="fc-sub" style="margin-top:6px">gdebenz: есть на {viz.fmt(now)} АЗС</div>
+        <div class="fc-sub" style="margin-top:6px">gdebenz (сообщений «есть»): {viz.fmt(now)}</div>
       </div>
     </div>"""
 
@@ -354,20 +361,19 @@ def _fuel_card(f, hist, cur, drows):
 # --------------------------------------------------------- availability ---
 def _availability_chart(cfg, hist, drows, dlabels):
     ma_n = cfg.get("ma_days", 3)
-    idx = analytics.col(drows, "avail_idx")
-    idx_chart = viz.line_chart("availidx", dlabels, [
-        {"name": "Индекс", "var": viz.ST_GOOD, "points": idx},
-        {"name": f"{ma_n}-дн. среднее", "var": "--f95", "points": analytics.moving_avg(idx, ma_n)},
+    wp = analytics.col(drows, "work_pp")
+    work_chart = viz.line_chart("availwork", dlabels, [
+        {"name": "Работающих АЗС, %", "var": viz.ST_GOOD, "points": wp},
+        {"name": f"{ma_n}-дн. среднее", "var": "--f95", "points": analytics.moving_avg(wp, ma_n)},
     ], unit=" %", end_labels=False)
-    src_chart = viz.line_chart("availsrc", dlabels, [
-        {"name": "gdebenz «есть»", "var": "--f95", "points": analytics.col(drows, "avail_gd")},
-        {"name": "petrolplus «транзакции»", "var": "--f92", "points": analytics.col(drows, "avail_pp")},
-    ], unit=" %", end_labels=False)
+    gd_chart = viz.line_chart("availgd", dlabels, [
+        {"name": "Баланс сообщений, %", "var": "--f92", "points": analytics.col(drows, "gd_bal")},
+    ], unit=" %", area=True, end_labels=False)
     status_chart = viz.line_chart("gbstatus", dlabels, [
         {"name": "Есть", "var": viz.ST_GOOD, "points": analytics.col(drows, "gb_yes")},
-        {"name": "Нет", "var": viz.ST_CRIT, "points": analytics.col(drows, "gb_no")},
         {"name": "Очередь", "var": viz.ST_SERIOUS, "points": analytics.col(drows, "gb_queue")},
         {"name": "Мало", "var": viz.ST_WARN, "points": analytics.col(drows, "gb_low")},
+        {"name": "Нет", "var": viz.ST_CRIT, "points": analytics.col(drows, "gb_no")},
     ], y_int=True, end_labels=False)
     fuel_avail = viz.line_chart("availfuel", dlabels,
         [{"name": f, "var": viz.FUEL_VAR[f], "points": analytics.col(drows, f"gb_now_{FUEL_TO_GRADE[f]}")}
@@ -375,15 +381,15 @@ def _availability_chart(cfg, hist, drows, dlabels):
     return f"""
     <div class="sec">Доступность топлива</div>
     <section class="grid2">
-      <div class="card"><h2>Индекс доступности, % <span class="hint">оба источника вместе + {ma_n}-дн. среднее</span>{viz.help_badge("Единый индекс = среднее двух: доля АЗС с «есть» (gdebenz) и доля работающих АЗС (petrolplus). Линия среднего сглаживает суточный шум.", _v_avail_index(hist))}</h2>
-        {viz.legend([("Индекс", viz.ST_GOOD), (f"{ma_n}-дн. среднее", "--f95")], "availidx")}{idx_chart}</div>
-      <div class="card"><h2>Источники доступности, % <span class="hint">каждый по отдельности</span>{viz.help_badge("Два исходных показателя, из которых считается индекс: наличие по gdebenz и транзакции по petrolplus. Обычно идут рядом.", _v_avail_index(hist))}</h2>
-        {viz.legend([("gdebenz «есть»", "--f95"), ("petrolplus «транзакции»", "--f92")], "availsrc")}{src_chart}</div>
+      <div class="card"><h2>Работающих АЗС, % <span class="hint">petrolplus · полная база + {ma_n}-дн. среднее</span>{viz.help_badge("Доля всех АЗС, где идут транзакции (petrolplus, полная база) — честная станционная доступность (не по видам). ПРАВЫЙ график — это про другое: баланс сообщений пользователей (gdebenz), не смешивать.", _v_work(hist))}</h2>
+        {viz.legend([("Работающих АЗС, %", viz.ST_GOOD), (f"{ma_n}-дн. среднее", "--f95")], "availwork")}{work_chart}</div>
+      <div class="card"><h2>Баланс сообщений о наличии, % <span class="hint">gdebenz · краудсорс</span>{viz.help_badge("(есть+очередь+мало) ÷ все сообщения пользователей о станции. НЕ «доля АЗС с топливом»: краудсорс смещён к жалобам (люди чаще отмечают проблемы), охват неполный. Это индикатор настроения/дефицита, а не полная доступность. Очередь и «мало» здесь считаются как «топливо есть».", _v_gd_bal(hist))}</h2>
+        {gd_chart}</div>
     </section>
     <section class="grid2">
-      <div class="card"><h2>Статусы АЗС <span class="hint">gdebenz · наличие · по дням</span>{viz.help_badge("Сколько АЗС в статусах есть/нет/очередь/мало по gdebenz. «Есть» = станция сообщила, что топливо (ЛЮБОЕ) есть — это НЕ сумма по видам (у станции может быть несколько видов), поэтому не сходится с числами на карточках видов.", _v_avail_index(hist))}</h2>
-        {viz.legend([("Есть", viz.ST_GOOD, "rect"), ("Нет", viz.ST_CRIT, "rect"), ("Очередь", viz.ST_SERIOUS, "rect"), ("Мало", viz.ST_WARN, "rect")], "gbstatus")}{status_chart}</div>
-      <div class="card"><h2>Наличие по видам, АЗС <span class="hint">gdebenz · по дням</span>{viz.help_badge("Число АЗС, где марка есть сейчас (gdebenz). Видно, какой вид просаживается первым.", _v_fuel_avail(hist))}</h2>
+      <div class="card"><h2>Статусы АЗС <span class="hint">gdebenz · сообщения · по дням</span>{viz.help_badge("Число сообщений пользователей по статусам. «Есть/Очередь/Мало» — топливо ЕСТЬ (очередь/мало — с трудом); «Нет» — топлива нет. Это отметки людей о станции (любое топливо), не сумма по видам и не полная база.", _v_fuel_avail(hist))}</h2>
+        {viz.legend([("Есть", viz.ST_GOOD, "rect"), ("Очередь", viz.ST_SERIOUS, "rect"), ("Мало", viz.ST_WARN, "rect"), ("Нет", viz.ST_CRIT, "rect")], "gbstatus")}{status_chart}</div>
+      <div class="card"><h2>Наличие по видам, сообщений <span class="hint">gdebenz · по дням</span>{viz.help_badge("Сколько АЗС пользователи отметили как имеющие марку сейчас (gdebenz, краудсорс — оценка снизу). Видно, какой вид просаживается первым.", _v_fuel_avail(hist))}</h2>
         {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS], "availfuel")}{fuel_avail}</div>
     </section>"""
 
@@ -427,28 +433,29 @@ def _price_charts(cfg, hist, days, drows, dlabels, all_events):
     <section class="card"><h2>Медианная цена по видам <span class="hint">по дням · ₽ · наведите для значений</span>{viz.help_badge("Медианная цена каждого вида по дням (замер около заданного часа — без внутрисуточного шума).", _v_price95(hist))}</h2>
       {viz.legend([(f, viz.FUEL_VAR[f]) for f in FUELS], "pxday")}{price_daily}</section>
     <section class="grid2">
-      <div class="card"><h2>АИ-95: независимые vs сети <span class="hint">₽ · по дням</span>{viz.help_badge("Независимые АЗС (вне ВИНК) поднимают цены раньше сетей — их отрыв сигналит о дефиците. Показаны независимые, сети и отслеживаемые сети.", _v_spread(hist))}</h2>
+      <div class="card"><h2>АИ-95: независимые vs сети <span class="hint">₽ · по дням</span>{viz.help_badge("Независимые АЗС (вне ВИНК) поднимают цены раньше сетей — их отрыв сигналит о дефиците. Смотрите на ДИНАМИКУ (направление), а не на абсолют: медианы считаются по разным наборам АЗС, поэтому спред отражает и тип АЗС, и географию, не только дефицитную наценку.", _v_spread(hist))}</h2>
         {viz.legend([("Независимые", viz.ST_CRIT), ("Сети", "--f95")] + [(nw, NET_COLORS.get(nw, "--f98")) for nw in cfg.get("tracked_networks", [])], "pxnet")}{net}</div>
-      <div class="card"><h2>Насколько независимые дороже <span class="hint">спред, ₽ · по дням</span>{viz.help_badge("Разница медиан: независимые минус сети. Растёт — дефицит усиливается.", _v_spread(hist))}</h2>
+      <div class="card"><h2>Насколько независимые дороже <span class="hint">спред, ₽ · по дням</span>{viz.help_badge("Разница медиан: независимые минус сети. РОСТ = дефицит усиливается (ранний сигнал). Важно направление, не абсолют: наборы АЗС разные (тип+география), поэтому абсолютное значение спреда переоценивать не стоит.", _v_spread(hist))}</h2>
         {spread}</div>
     </section>"""
 
 
 # ---------------------------------------------------------------- timing ---
 def _timing_charts(hist, drows):
-    hour_avg, _ = analytics.by_hour(hist, "gb_yes")
+    # строим на petrolplus (полная база, azs_available), а не на смещённых по времени отметках gdebenz
+    hour_avg, _ = analytics.by_hour(hist, "azs_available")
     have = [h for h in range(24) if hour_avg[h] is not None]
-    best_txt = (f"Больше всего наличия около <b>{max(have, key=lambda h: hour_avg[h]):02d}:00</b> МСК"
+    best_txt = (f"Больше всего работающих АЗС около <b>{max(have, key=lambda h: hour_avg[h]):02d}:00</b> МСК"
                 if len(have) >= 6 else "Копим почасовые данные…")
     hour_bars = viz.bar_chart([str(h) for h in range(24)], hour_avg, var=viz.ST_GOOD, highlight="max")
-    wd = analytics.by_weekday(drows, "avail_idx")
-    wd_bars = viz.bar_chart(analytics.WEEKDAYS, wd, var=viz.ST_GOOD, highlight="max", unit=" %")
+    wd = analytics.by_weekday(drows, "azs_available")
+    wd_bars = viz.bar_chart(analytics.WEEKDAYS, wd, var=viz.ST_GOOD, highlight="max", unit=" АЗС")
     return f"""
     <div class="sec">Когда заправляться</div>
     <section class="grid2">
-      <div class="card"><h2>Лучшее время заправки <span class="hint">среднее «есть» по часу</span>{viz.help_badge("Среднее число АЗС с наличием по часу суток за всё время. Зелёный столбец — когда топлива обычно больше.", _v_best_hour(hist))}</h2>
+      <div class="card"><h2>Лучшее время заправки <span class="hint">работающих АЗС по часу · petrolplus</span>{viz.help_badge("Среднее число РАБОТАЮЩИХ АЗС по часу суток (petrolplus, полная база). Считаем по нему, а не по отметкам gdebenz: краудсорс смещён по времени (днём отметок больше просто из-за активности людей, а не наличия). Зелёный столбец — когда работающих АЗС обычно больше.", _v_best_hour(hist))}</h2>
         <div class="stat-row" style="margin:0 0 8px">{best_txt}</div>{hour_bars}</div>
-      <div class="card"><h2>Лучший день для заправки <span class="hint">средняя доступность по дням недели</span>{viz.help_badge("Средний индекс доступности по дням недели. Зелёный столбец — день, когда заправиться обычно легче всего.", _v_best_day(drows))}</h2>
+      <div class="card"><h2>Лучший день для заправки <span class="hint">работающих АЗС по дням · petrolplus</span>{viz.help_badge("Среднее число работающих АЗС (petrolplus) по дням недели. Зелёный столбец — день, когда заправиться обычно легче.", _v_best_day(drows))}</h2>
         {wd_bars}</div>
     </section>"""
 
@@ -541,11 +548,14 @@ def _gdebenz_brand_table(stations):
 
 
 def _footer():
-    return ('<p class="foot"><b>Доступность топлива</b> — единый индекс из двух источников: '
-            '«есть бензин» (gdebenz, краудсорс — сообщают пользователи) и «идут транзакции» '
-            '(petrolplus / АЗС-Локатор — высокая доступность на АЗС). Цена — petrolplus, медиана '
-            'по свежим ценам. Спред «независимые − сети» — ранний сигнал дефицита. '
-            'Всё справочно.</p>')
+    return ('<p class="foot"><b>Работающих АЗС %</b> — доля всех АЗС с транзакциями (petrolplus, '
+            'полная база) — честная станционная доступность. <b>Баланс сообщений %</b> = '
+            '(есть+очередь+мало) ÷ все отметки пользователей (gdebenz, краудсорс, смещён к жалобам) — '
+            'индикатор настроения/дефицита, НЕ полная доступность; очередь/мало = топливо есть с трудом. '
+            'Эти два НЕ усредняем — разные вещи. По видам: «станция работает %» — станционный сигнал '
+            '(станция торгует), не гарантия конкретного вида. Цена — petrolplus, медиана по свежим '
+            'ценам. Спред «независимые − сети» — ранний сигнал дефицита (важно направление, не абсолют). '
+            'Дельты — по дневной выборке (тот же час). Всё справочно.</p>')
 
 
 # --------------------------------------------------------------- verdicts ---
@@ -574,15 +584,19 @@ def _v_price95(hist):
     return "АИ-95 " + ", ".join(seg) + "."
 
 
-def _v_avail_index(hist):
-    idx, gd, pp = _av_pcts(hist[-1])
-    if idx is None:
+def _v_work(hist):
+    pp, _ = _av_pcts(hist[-1])
+    if pp is None:
         return "Данные копятся."
-    s = f"Сейчас {idx}% (gdebenz {gd if gd is not None else '—'}%, petrolplus {pp if pp is not None else '—'}%)."
-    d24 = analytics.delta(hist, "avail_idx", 24)
-    if d24 is not None and abs(d24) >= 0.5:
-        s += f" За сутки {'↑' if d24 > 0 else '↓'}{abs(d24):.1f} п.п."
-    return s
+    return f"Сейчас работают {pp}% всех АЗС (petrolplus, полная база)."
+
+
+def _v_gd_bal(hist):
+    _, gd = _av_pcts(hist[-1])
+    if gd is None:
+        return "Сообщений пока мало."
+    return (f"Баланс сообщений {gd}% (есть+очередь+мало). Это настроение пользователей, "
+            f"а не полная доступность — краудсорс смещён к жалобам.")
 
 
 def _v_spread(hist):
@@ -601,27 +615,27 @@ def _v_fuel_avail(hist):
     items = [(f, _lv(hist, f"gb_now_{FUEL_TO_GRADE[f]}")) for f in FUELS]
     items = [(f, v) for f, v in items if v is not None]
     if not items:
-        return "Наличие по видам копится."
+        return "Данные копятся."
     f, v = min(items, key=lambda x: x[1])
-    return f"Труднее всего найти {f} — есть на {int(v)} АЗС сейчас."
+    return f"Реже всего отмечают наличие {f} ({int(v)} АЗС по gdebenz)."
 
 
 def _v_best_hour(hist):
-    avg, _ = analytics.by_hour(hist, "gb_yes")
+    avg, _ = analytics.by_hour(hist, "azs_available")
     have = [h for h in range(24) if avg[h] is not None]
     if len(have) < 6:
         return "Нужно ≥ суток почасовых данных — копится."
-    return f"Больше всего топлива около {max(have, key=lambda h: avg[h]):02d}:00 МСК — лучшее время."
+    return f"Больше всего работающих АЗС около {max(have, key=lambda h: avg[h]):02d}:00 МСК."
 
 
 def _v_best_day(drows):
-    wd = analytics.by_weekday(drows, "avail_idx")
+    wd = analytics.by_weekday(drows, "azs_available")
     have = [i for i in range(7) if wd[i] is not None]
     if len(have) < 3:
         return "Нужно несколько дней — копится."
     best = max(have, key=lambda i: wd[i])
     worst = min(have, key=lambda i: wd[i])
-    return (f"Легче всего заправиться в {analytics.WEEKDAYS[best]}, тяжелее — "
+    return (f"Больше всего работающих АЗС в {analytics.WEEKDAYS[best]}, меньше — "
             f"в {analytics.WEEKDAYS[worst]}.")
 
 

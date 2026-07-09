@@ -94,6 +94,20 @@ def delta(hist, name, hours):
     return round(curv - prev, 2)
 
 
+def daily_delta(daily_rows, name, days_back):
+    """Дельта строго по ДНЕВНОЙ выборке (тот же час к тому же часу N дней назад),
+    а не «ближайший замер» — чтобы не поймать суточный профиль вместо тренда."""
+    vals = col(daily_rows, name)
+    idx = [i for i, v in enumerate(vals) if v is not None]
+    if len(idx) < 2:
+        return None
+    last = idx[-1]
+    prev = [i for i in idx if i <= last - days_back]
+    if not prev:
+        return None
+    return round(vals[last] - vals[prev[-1]], 2)
+
+
 def by_weekday(daily_rows, name):
     """Среднее значение метрики по дням недели (из дневной выборки)."""
     acc = {i: [] for i in range(7)}
