@@ -375,6 +375,14 @@ h1{margin:0 0 4px;font-size:25px;font-weight:680;letter-spacing:-.02em}
 .barometer.bl-crit{background:rgba(208,59,59,.15)}
 .baro-arrow{font-weight:700}
 .fuelcard.fc-active{outline:2px solid var(--accent);outline-offset:1px}
+.fuelcard,.fsum,.fbtn{transition:opacity .2s ease,box-shadow .2s ease,filter .2s ease,outline-color .2s ease}
+.badge-low{display:inline-block;margin-left:8px;font-size:10.5px;font-weight:800;letter-spacing:.03em;
+  color:#8a1f1f;background:#fde2e2;border:1px solid #f2b8b8;border-radius:6px;padding:1px 6px;vertical-align:middle}
+@media(prefers-color-scheme:dark){.badge-low{color:#f2b8b8;background:#3a1414;border-color:#5a1f1f}}
+.fuelcard.low-data{opacity:.62;filter:saturate(.5)}
+.fuelcard.low-data:hover{opacity:.9;filter:none}
+.fc-warn{color:var(--bad);font-size:11.5px;margin-top:5px;line-height:1.4}
+.chart .ser{transition:opacity .2s ease}
 .ser.ser-dim{opacity:.16}
 .stat-row{display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);margin:0 0 16px}
 .stat-row b{color:var(--ink);font-variant-numeric:tabular-nums}

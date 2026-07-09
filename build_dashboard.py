@@ -92,7 +92,7 @@ def _work_pct(hist, f):
 def _fuel_summary(f, hist, drows, cfg):
     g = FUEL_TO_GRADE[f]
     fresh = _lv(hist, f"p_fresh_{f}")
-    low = fresh is None or fresh < 15
+    low = fresh is None or fresh < cfg.get("min_fresh_prices", 30)
     work = _work_pct(hist, f)
     n_sell = _lv(hist, f"p_n_{f}")
     spread = _lv(hist, f"net_spread_{f}")
@@ -222,7 +222,7 @@ def build(base_dir, price_stations=None, gd_stations=None):
         _summary_blocks(hist, drows, cfg),
         _hero(hist, cur, drows),
         f'<div class="sec">По видам топлива {viz.help_badge("По каждому виду. Цена — petrolplus. «Продают» — сколько АЗС продают вид. «Из них станция работает %» — доля продающих АЗС, где идут транзакции (petrolplus). ВАЖНО: это СТАНЦИОННЫЙ сигнал (станция вообще торгует), не гарантия именно этого вида — работающая АЗС обычно отпускает все свои виды, но не всегда. «gdebenz (сообщений «есть»)» — сколько пользователей отметили наличие (краудсорс, оценка снизу). Это разные метрики, не смешивать.", _v_fuel_avail(hist))}</div>',
-        f'<div class="fuelgrid">{"".join(_fuel_card(f, hist, cur, drows) for f in FUELS)}</div>',
+        f'<div class="fuelgrid">{"".join(_fuel_card(f, hist, cur, drows, cfg) for f in FUELS)}</div>',
         _availability_chart(cfg, hist, drows, dlabels),
         _price_charts(cfg, hist, days, drows, dlabels, events + auto_events),
         _timing_charts(hist, drows),
@@ -233,7 +233,7 @@ def build(base_dir, price_stations=None, gd_stations=None):
         'Число АЗС у одной сети в них отличается — напрямую не сравнивайте.</span></div>',
         f'<section class="card"><h2>Цены по сетям <span class="hint">медиана, ₽ · источник petrolplus</span>{viz.help_badge("Медиана цены по каждой сети и виду (petrolplus). Названия сетей нормализованы (дубли регистра/языка сведены), «Без бренда» — АЗС без распознанной сети.", _v_spread(hist))}</h2>{_price_brand_table(price_stations)}</section>',
         f'<section class="card"><h2>Наличие по сетям <span class="hint">число АЗС «есть» · источник gdebenz</span>{viz.help_badge("По каждой сети: сколько АЗС со статусом «есть» и на скольких сейчас есть каждый вид (gdebenz, краудсорс). Это ДРУГОЙ набор АЗС, чем в «Ценах по сетям».")}</h2>{_gdebenz_brand_table(gd_stations)}</section>',
-        _footer(),
+        _footer(cfg),
     ])
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(viz.wrap(f"Бензин · {viz.short_dt(last['ts_msk'])}", body))
@@ -332,28 +332,44 @@ def _dd(drows, col_name, unit="", good_down=True):
 
 
 # -------------------------------------------------------------- fuel cards ---
-def _fuel_card(f, hist, cur, drows):
+def _fuel_card(f, hist, cur, drows, cfg):
     g = FUEL_TO_GRADE[f]
     var = viz.FUEL_VAR[f]
     med = cur(f"p_med_{f}")
     n = _i(cur(f"p_n_{f}"))                 # продают этот вид (petrolplus)
     fresh = _i(cur(f"p_fresh_{f}"))         # свежих цен за медианой
-    navail = _i(cur(f"p_navail_{f}"))       # из них с высокой доступностью (работают)
-    now = _i(cur(f"gb_now_{g}"))            # gdebenz: краудсорс-подтверждение
-    share = viz.pct(navail or 0, n) if n else None   # знаменатель = ПРОДАЮЩИЕ, не все
+    navail = _i(cur(f"p_navail_{f}"))       # из них станция работает
+    now = _i(cur(f"gb_now_{g}"))            # gdebenz: сообщений «есть»
+    tot = _i(cur("azs_total"))
+    share = viz.pct(navail or 0, n) if n else None
+    share_all = viz.pct(n or 0, tot) if tot else None   # доля ВСЕХ АЗС, продающих вид (редкость)
     spark = viz.sparkline(analytics.col(drows, f"p_med_{f}"), var, w=84, h=30)
-    low = fresh is None or fresh < 15       # разреженная статистика цены
-    badge = ' <span class="ev-auto" title="цена по малому числу свежих АЗС — шумно">мало данных</span>' if low else ""
+
+    min_fresh = cfg.get("min_fresh_prices", 30)
+    low = fresh is None or fresh < min_fresh            # цена ненадёжна
+    diverge = low and (now or 0) >= 40 and (now or 0) > 2 * (n or 1)  # источники расходятся
+
+    badge = ('<span class="badge-low">МАЛО ДАННЫХ</span>' if low else "")
+    warn = ""
+    if low:
+        warn += f'<div class="fc-warn">Цена по {viz.fmt(fresh)} ценам — ненадёжна.</div>'
+    if diverge:
+        warn += (f'<div class="fc-warn">⚠ Источники расходятся: реальных цен {viz.fmt(fresh)}, '
+                 f'а отметок наличия {viz.fmt(now)}.</div>')
+    cls = "fuelcard low-data" if low else "fuelcard"
     return f"""
-    <div class="fuelcard" data-fuel="{html.escape(f)}" style="--accent:var({var})">
+    <div class="{cls}" data-fuel="{html.escape(f)}" data-low="{'1' if low else '0'}" style="--accent:var({var})">
       <div class="fc-head"><span class="fc-dot" style="background:var({var})"></span>
         <span class="fc-name">{html.escape(f)}</span>{badge}</div>
       <div class="fc-price"><div class="fc-val">{viz.fmt(med,' ₽') if med is not None else '—'}</div>{spark}</div>
       <div class="fc-avail">
-        <div class="fc-arow"><span class="lbl">Продают</span><span class="num">{viz.fmt(n)} АЗС</span></div>
-        <div class="fc-arow"><span class="lbl">Из них станция работает</span><span class="num">{viz.fmt(share)}%</span></div>
+        <div class="fc-arow"><span class="lbl">Продают</span>
+          <span class="num">{viz.fmt(n)} АЗС · {viz.fmt(share_all)}% всех</span></div>
+        <div class="fc-arow"><span class="lbl">Станция работает</span>
+          <span class="num">{viz.fmt(navail)} из {viz.fmt(n)} ({viz.fmt(share)}%)</span></div>
         {viz.meter(share, viz.ST_GOOD)}
-        <div class="fc-sub" style="margin-top:6px">gdebenz (сообщений «есть»): {viz.fmt(now)}</div>
+        <div class="fc-sub" style="margin-top:6px">gdebenz: {viz.fmt(now)} сообщений «есть»</div>
+        {warn}
       </div>
     </div>"""
 
@@ -519,7 +535,8 @@ def _price_brand_table(stations):
         cells = ""
         for f in FUELS:
             vals = a["p"][f]
-            cells += (f'<td>{viz.fmt(round(median(vals),2)," ₽")}</td>' if vals else '<td>—</td>')
+            cells += (f'<td>{viz.fmt(round(median(vals),2)," ₽")}</td>' if vals
+                      else '<td title="вид почти не продаётся в этой сети">—</td>')
         trs += f'<tr><td class="b">{html.escape(b)}</td><td>{a["n"]}</td>{cells}</tr>'
     return ('<div class="tablewrap"><table class="tbl"><thead><tr><th>Сеть</th><th>АЗС</th>'
             + head + '</tr></thead><tbody>' + trs + '</tbody></table></div>')
@@ -541,20 +558,23 @@ def _gdebenz_brand_table(stations):
     ghead = "".join(f"<th>{html.escape('АИ-'+g if g != 'ДТ' else g)}</th>" for g in grades)
     trs = ""
     for b, a in sorted(agg.items(), key=lambda kv: -kv[1]["n"])[:12]:
-        cells = "".join(f'<td>{a[g] or "—"}</td>' for g in grades)
+        cells = "".join((f'<td>{a[g]}</td>' if a[g]
+                         else '<td title="нет отметок наличия этого вида">—</td>') for g in grades)
         trs += f'<tr><td class="b">{html.escape(b)}</td><td>{a["n"]}</td><td>{a["yes"]}</td>{cells}</tr>'
     return ('<div class="tablewrap"><table class="tbl"><thead><tr><th>Сеть</th><th>АЗС</th>'
             '<th>Есть</th>' + ghead + '</tr></thead><tbody>' + trs + '</tbody></table></div>')
 
 
-def _footer():
-    return ('<p class="foot"><b>Работающих АЗС %</b> — доля всех АЗС с транзакциями (petrolplus, '
+def _footer(cfg):
+    fd = cfg.get("fresh_days", 4)
+    return (f'<p class="foot">Медиана цены — petrolplus, по свежим ценам (обновлённым ≤ {fd} дн). '
+            '<b>Работающих АЗС %</b> — доля всех АЗС с транзакциями (petrolplus, '
             'полная база) — честная станционная доступность. <b>Баланс сообщений %</b> = '
             '(есть+очередь+мало) ÷ все отметки пользователей (gdebenz, краудсорс, смещён к жалобам) — '
             'индикатор настроения/дефицита, НЕ полная доступность; очередь/мало = топливо есть с трудом. '
             'Эти два НЕ усредняем — разные вещи. По видам: «станция работает %» — станционный сигнал '
-            '(станция торгует), не гарантия конкретного вида. Цена — petrolplus, медиана по свежим '
-            'ценам. Спред «независимые − сети» — ранний сигнал дефицита (важно направление, не абсолют). '
+            '(станция торгует), не гарантия конкретного вида. Спред «независимые − сети» — ранний '
+            'сигнал дефицита (важно направление, не абсолют). '
             'Дельты — по дневной выборке (тот же час). Всё справочно.</p>')
 
 
