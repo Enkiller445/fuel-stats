@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Data, Fuel } from "./types";
-import { rub, pct, int, fuelVar, LEVEL_LABEL, clsx } from "./lib";
+import { rub, pct, int, fuelVar, LEVEL_LABEL, clsx, plural, ageText } from "./lib";
 import { Card, Chip, Plaque, Delta, Help, Verdict, Sparkline, SectionTitle } from "./ui";
 import { LineTrend, StatusStack, Bars, SpreadChart } from "./charts";
 import * as V from "./verdicts";
@@ -78,6 +78,14 @@ export function Assistant({ f }: { f: Fuel }) {
         </span>
         <Chip level={s.level}>{LEVEL_LABEL[s.level]}</Chip>
       </div>
+      {!f.priceReliable && (
+        <p className="mt-2 rounded-lg px-3 py-2 text-sm" style={{ background: "color-mix(in srgb, var(--warn) 14%, transparent)", color: "var(--ink2)" }}>
+          ⚠ <b>Цена ненадёжна.</b>{" "}
+          {f.priceSuspect
+            ? `медиана ${rub(f.price)} выше более высокооктанового топлива — так не бывает, значит свежих цен мало (${int(f.fresh)}) и они с дорогих единичных АЗС. Не ориентир рынка.`
+            : `свежих цен всего ${int(f.fresh)} — медиана ${rub(f.price)} собрана с горстки точек, не отражает рынок.`}
+        </p>
+      )}
       <p className="mt-2 text-base leading-snug" style={{ color: "var(--ink)" }}>
         {s.state}
       </p>
@@ -151,34 +159,74 @@ function Meter({ v, color }: { v: number; color: string }) {
 
 export function KpiRow({ d, f }: { d: Data; f: Fuel }) {
   const c = fuelVar(f.color);
+  const tot = d.overall.azsTotal;
+  const age = ageText(f.age, d.freshDays);
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Kpi
         label={`Цена ${f.grade === "ДТ" ? "ДТ" : "АИ-" + f.grade}`}
-        help={<Help title="Цена — медиана">{V.vPrice(f)}<Verdict>{V.vPrice(f)}</Verdict></Help>}
-        value={rub(f.price)}
-        sub={<Delta v={f.price_d1} unit="rub" goodUp={false} />}
-        right={<Sparkline vals={f.series.price} color={c} />}
+        help={<Help title="Цена — медиана свежих цен"><Verdict>{V.vPrice(f)}</Verdict></Help>}
+        value={
+          f.priceReliable ? (
+            rub(f.price)
+          ) : (
+            <span style={{ color: "var(--muted)" }}>≈{rub(f.price)}</span>
+          )
+        }
+        sub={
+          f.priceReliable ? (
+            <span className="flex items-center gap-2">
+              <Delta v={f.price_d1} unit="rub" goodUp={false} />
+              <span style={{ color: age.stale ? "var(--warn)" : "var(--muted)" }}>· {age.text}</span>
+            </span>
+          ) : (
+            <span style={{ color: "var(--warn)" }}>ненадёжно · {int(f.fresh)} свежих цен</span>
+          )
+        }
+        right={f.priceReliable ? <Sparkline vals={f.series.price} color={c} /> : undefined}
       />
       <Kpi
         label="Работают сейчас"
-        help={<Help title="Работающих АЗС, %">Доля точек, что реально отпускают эту марку, среди тех, кто её продаёт.<Verdict>{V.vFuelAvail(f)}</Verdict></Help>}
-        value={f.low ? "—" : pct(f.work_pct)}
-        sub={<span style={{ color: "var(--muted)" }}>{int(f.navail)} из {int(f.n)}</span>}
-        right={f.work_pct != null && !f.low ? <Meter v={f.work_pct} color={c} /> : undefined}
+        help={<Help title="Работающих АЗС по марке">% — среди тех, кто продаёт марку. Но саму марку держат не все АЗС: смотрите абсолют «из скольких всего».<Verdict>{V.vFuelAvail(f)}</Verdict></Help>}
+        value={f.work_pct == null ? "—" : pct(f.work_pct)}
+        sub={
+          <span style={{ color: "var(--muted)" }}>
+            продают на {int(f.n)} из {int(tot)}
+            {f.share_all != null && <span style={{ color: f.share_all < 25 ? "var(--serious)" : "var(--muted)" }}> · {f.share_all}% всех</span>}
+          </span>
+        }
+        right={f.work_pct != null ? <Meter v={f.work_pct} color={c} /> : undefined}
       />
       <Kpi
         label="Спред сети−независимые"
-        help={<Help title="Разница цен">Насколько независимые АЗС дороже сетевых.<Verdict>{V.vSpread(f)}</Verdict></Help>}
-        value={f.spread == null ? "—" : `${f.spread.toFixed(2)} ₽`}
-        sub={<Delta v={f.spread_d7} unit="rub" goodUp={false} />}
-        right={<Sparkline vals={f.series.spread} color={c} />}
+        help={<Help title="Разница цен">Насколько независимые АЗС дороже сетевых — направление напряжённости, не абсолют.<Verdict>{V.vSpread(f)}</Verdict></Help>}
+        value={
+          !f.priceReliable || f.spread == null ? (
+            <span style={{ color: "var(--muted)" }}>—</span>
+          ) : (
+            `${f.spread.toFixed(2)} ₽`
+          )
+        }
+        sub={
+          !f.priceReliable || f.spread == null ? (
+            <span style={{ color: "var(--muted)" }}>мало данных</span>
+          ) : (
+            <Delta v={f.spread_d7} unit="rub" goodUp={false} />
+          )
+        }
+        right={f.priceReliable && f.spread != null ? <Sparkline vals={f.series.spread} color={c} /> : undefined}
       />
       <Kpi
         label="gdebenz: «есть»"
-        help={<Help title="Сообщений «есть»">Сколько АЗС по краудсорсу gdebenz сейчас отмечены как «топливо есть». Оценка снизу.<Verdict>{V.vShare(f, d.overall.azsTotal)}</Verdict></Help>}
+        help={<Help title="Сообщений «есть»">Сколько АЗС по краудсорсу gdebenz сейчас отмечены как «топливо есть» (вкл. очередь/лимит). Оценка снизу — про пустые пишут чаще.<Verdict>{V.vShare(f, tot)}</Verdict></Help>}
         value={int(f.now)}
-        sub={<span style={{ color: "var(--muted)" }}>{f.share_all != null ? `в прайсе у ${f.share_all}% АЗС` : ""}</span>}
+        sub={
+          f.diverge ? (
+            <span style={{ color: "var(--warn)" }}>но свежих цен {int(f.fresh)} — расходится</span>
+          ) : (
+            <span style={{ color: "var(--muted)" }}>{f.share_all != null ? `в прайсе у ${f.share_all}% АЗС` : ""}</span>
+          )
+        }
         right={<Sparkline vals={f.series.now} color={c} />}
       />
     </div>
@@ -187,6 +235,7 @@ export function KpiRow({ d, f }: { d: Data; f: Fuel }) {
 
 // --------------------------------------------------------------- Fuel cards
 export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPick: (f: string) => void }) {
+  const tot = d.overall.azsTotal;
   return (
     <>
       <SectionTitle>Все марки</SectionTitle>
@@ -195,33 +244,42 @@ export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPi
           const f = d.byFuel[name];
           const c = fuelVar(f.color);
           const on = name === active;
+          const age = ageText(f.age, d.freshDays);
           return (
             <button key={name} onClick={() => onPick(name)} className="text-left">
-              <Card accent={on ? c : undefined} dim={f.low} className={clsx(on && "ring-2")}>
+              <Card accent={on ? c : undefined} dim={!f.priceReliable} className={clsx(on && "ring-2")}>
                 <div className="flex items-center justify-between">
                   <span className="font-bold" style={{ color: c }}>
                     {name}
                   </span>
-                  {f.low ? (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "var(--line)", color: "var(--ink2)" }}>
-                      МАЛО ДАННЫХ
+                  {!f.priceReliable ? (
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "color-mix(in srgb, var(--warn) 20%, transparent)", color: "var(--warn)" }}>
+                      ЦЕНА НЕНАДЁЖНА
                     </span>
                   ) : (
                     <Chip level={f.summary.level}>{LEVEL_LABEL[f.summary.level]}</Chip>
                   )}
                 </div>
-                <div className="mt-2 text-xl font-bold tnum">{rub(f.price)}</div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-xl font-bold tnum" style={{ color: f.priceReliable ? "var(--ink)" : "var(--muted)" }}>
+                    {f.priceReliable ? rub(f.price) : `≈${rub(f.price)}`}
+                  </span>
+                  <span className="text-[11px]" style={{ color: age.stale ? "var(--warn)" : "var(--muted)" }}>
+                    {f.priceReliable ? age.text : `по ${int(f.fresh)} ценам`}
+                  </span>
+                </div>
                 <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                  {f.low
-                    ? `Продают ${int(f.n)} · ${f.share_all ?? "—"}% всех АЗС`
-                    : `Работают ${pct(f.work_pct)} · ${int(f.navail)} из ${int(f.n)}`}
+                  Продают на {int(f.n)} из {int(tot)}
+                  {f.share_all != null && (
+                    <b style={{ color: f.share_all < 25 ? "var(--serious)" : "var(--ink2)" }}> · {f.share_all}% всех</b>
+                  )}
                 </div>
                 <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
-                  gdebenz: {int(f.now)} «есть»
+                  Работают {pct(f.work_pct)} · gdebenz {int(f.now)} «есть»
                 </div>
                 {f.diverge && (
-                  <div className="mt-1 text-xs" style={{ color: "var(--warn)" }}>
-                    ⚠ источники расходятся
+                  <div className="mt-1 text-xs leading-snug" style={{ color: "var(--warn)" }}>
+                    ⚠ gdebenz: {int(f.now)} «есть», а свежих цен {int(f.fresh)} — наличие вида под вопросом
                   </div>
                 )}
               </Card>
@@ -271,6 +329,8 @@ export function Charts({ d, f }: { d: Data; f: Fuel }) {
         </Card>
       </div>
 
+      <GeoCard d={d} />
+
       <SectionTitle>Сообщения gdebenz по статусам</SectionTitle>
       <Card>
         <StatusStack labels={d.days} yes={d.series.status.yes} queue={d.series.status.queue} low={d.series.status.low} no={d.series.status.no} />
@@ -295,6 +355,56 @@ export function Charts({ d, f }: { d: Data; f: Fuel }) {
           </Card>
         </div>
       </div>
+    </>
+  );
+}
+
+function GeoCard({ d }: { d: Data }) {
+  const g = d.geo;
+  if (!g || (!g.in.resp && !g.out.resp)) return null;
+  const rows = [
+    { label: "Внутри МКАД", s: g.in },
+    { label: "За МКАД (область)", s: g.out },
+  ];
+  const diff = g.in.pct != null && g.out.pct != null ? g.in.pct - g.out.pct : null;
+  return (
+    <>
+      <SectionTitle
+        help={
+          <Help title="Москва ↔ область">
+            Доля АЗС с сообщением «есть» (вкл. очередь/лимит) отдельно внутри МКАД и за ним — по координатам gdebenz.
+            {diff != null && (
+              <Verdict>
+                {Math.abs(diff) < 4
+                  ? "Сейчас разницы между городом и областью почти нет."
+                  : diff > 0
+                    ? `Внутри МКАД наличие на ${Math.abs(diff)} п.п. лучше, чем в области.`
+                    : `В области наличие на ${Math.abs(diff)} п.п. лучше, чем внутри МКАД.`}
+              </Verdict>
+            )}
+          </Help>
+        }
+      >
+        Наличие: город ↔ область
+      </SectionTitle>
+      <Card>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {rows.map((r) => (
+            <div key={r.label}>
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm" style={{ color: "var(--ink2)" }}>{r.label}</span>
+                <span className="text-lg font-bold tnum">{r.s.pct != null ? `${r.s.pct}%` : "—"}</span>
+              </div>
+              <div className="mt-1 h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--line)" }}>
+                <div className="h-full rounded-full" style={{ width: `${r.s.pct ?? 0}%`, background: "var(--good)" }} />
+              </div>
+              <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                {r.s.yes} «есть» из {r.s.resp} ответивших
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
     </>
   );
 }
@@ -414,11 +524,3 @@ export function Footer({ d }: { d: Data }) {
   );
 }
 
-// ------------------------------------------------------------------- helpers
-function plural(n: number, one: string, few: string, many: string) {
-  const m10 = n % 10,
-    m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
-  return many;
-}

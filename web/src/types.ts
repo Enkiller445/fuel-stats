@@ -31,10 +31,13 @@ export interface Fuel {
   fresh: Num;
   navail: Num;
   now: Num;
+  age: Num; // медианный возраст цен, дней
   share_all: Num; // % от всех АЗС региона
   work_pct: Num; // % работающих среди продающих
   low: boolean; // мало свежих цен
-  diverge: boolean; // расхождение источников
+  diverge: boolean; // расхождение источников (gdebenz «есть» ≫ свежих цен)
+  priceReliable: boolean; // можно показывать медиану как цену
+  priceSuspect: boolean; // «октановый абсурд» — выборка кривая
   spread: Num;
   spread_d7: Num;
   summary: Summary;
@@ -94,4 +97,15 @@ export interface Data {
   alerts: string[];
   brandsPrice: BrandPrice[];
   brandsGd: BrandGd[];
+  geo: Geo | null;
+}
+
+export interface GeoSide {
+  resp: number;
+  yes: number;
+  pct: Num;
+}
+export interface Geo {
+  in: GeoSide;
+  out: GeoSide;
 }

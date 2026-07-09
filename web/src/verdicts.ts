@@ -37,18 +37,22 @@ export function vSpread(f: Fuel): string {
 
 export function vPrice(f: Fuel): string {
   if (f.price == null) return "Пока нет свежих цен.";
+  if (!f.priceReliable)
+    return `Свежих цен всего ${f.fresh ?? 0} — медиана ${f.price.toFixed(2)} ₽ собрана с горстки (часто дорогих) АЗС и не отражает рынок. Ориентируйтесь на цены крупных сетей.`;
   const d = f.price_d7;
   const t =
     d == null ? "динамику за неделю посчитаем позже."
     : Math.abs(d) < 0.05 ? "за неделю практически без изменений."
     : d > 0 ? `за неделю +${d.toFixed(2)} ₽.` : `за неделю ${d.toFixed(2)} ₽.`;
-  return `Медиана свежих цен (не старше нескольких дней). ${t}`;
+  return `Медиана свежих цен. ${t}`;
 }
 
 export function vFuelAvail(f: Fuel): string {
-  if (f.low) return "Свежих цен по этой марке мало — доступность оцениваем осторожно, смотрите на абсолютные числа.";
-  if (f.work_pct == null) return "Пока нет данных.";
-  return `${f.work_pct}% из ${f.n} точек, что продают ${f.grade}, реально отпускают его сейчас.`;
+  if (f.work_pct == null || f.n == null) return "Пока нет данных.";
+  const rare = f.share_all != null && f.share_all < 25
+    ? ` Это лишь ${f.share_all}% всех АЗС — марку держат немногие, «${f.work_pct}%» не значит «легко найти».`
+    : "";
+  return `Марку продают на ${f.n} АЗС, из них реально отпускают сейчас ${f.work_pct}% (${f.navail}).${rare}`;
 }
 
 export function vShare(f: Fuel, total: Num): string {

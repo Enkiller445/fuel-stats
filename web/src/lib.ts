@@ -54,3 +54,19 @@ export function toXY(labels: string[], vals: Num[]) {
 export const enough = (vals: Num[], n = 2) => vals.filter((v) => v != null).length >= n;
 
 export const clsx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
+
+export function plural(n: number, one: string, few: string, many: string) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+
+// «сегодня» / «~3 дн назад» / «~13 дн назад — почти не торгуется»
+export function ageText(age: Num, freshDays: number): { text: string; stale: boolean } {
+  if (age == null) return { text: "нет дат", stale: false };
+  const a = Math.round(age);
+  const stale = a > freshDays;
+  if (a <= 0) return { text: "цены свежие (сегодня)", stale: false };
+  return { text: `цены ~${a} ${plural(a, "день", "дня", "дней")} назад`, stale };
+}

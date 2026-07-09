@@ -209,6 +209,18 @@ def collect_prices(cfg):
                 freshp.append(p)
         return allp, freshp
 
+    def age_median(rows, fuel):
+        """Медианный возраст (дней) цен по марке — сигнал «вид почти не торгуется»."""
+        ages = []
+        for r in rows:
+            p = r.get(f"price_{fuel}")
+            if p is None or not (lo <= p <= hi):
+                continue
+            a = _age_days(r.get(f"date_{fuel}"), ref)
+            if a is not None:
+                ages.append(a)
+        return round(statistics.median(ages), 1) if ages else None
+
     summary = {
         "azs_total": len(azs),
         "azs_available": len(azs_av),
@@ -221,6 +233,7 @@ def collect_prices(cfg):
         st["n"] = len(allp)                           # продают (все с ценой)
         st["n_fresh"] = len(freshp)
         st["n_avail"] = len(prices(azs_av, fuel)[0])  # доступные, продающие вид
+        st["age_med"] = age_median(azs, fuel)         # медианный возраст цен, дней
         summary["fuels"][fuel] = st
 
     # --- сети vs независимые по АИ-95 (независимые реагируют на дефицит первыми) ---

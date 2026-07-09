@@ -20,7 +20,7 @@ def _fieldnames(cfg):
     fn = ["ts_utc", "ts_msk", "azs_total", "azs_available"]
     for f in cfg.get("price_fuels", []):
         fn += [f"p_med_{f}", f"p_p10_{f}", f"p_p90_{f}", f"p_min_{f}",
-               f"p_max_{f}", f"p_n_{f}", f"p_navail_{f}", f"p_fresh_{f}"]
+               f"p_max_{f}", f"p_n_{f}", f"p_navail_{f}", f"p_fresh_{f}", f"p_age_{f}"]
     fn += ["gb_total", "gb_yes", "gb_no", "gb_queue", "gb_low", "gb_unknown"]
     for g in cfg.get("gdebenz_grades", []):
         fn += [f"gb_now_{g}"]
@@ -47,6 +47,7 @@ def build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary):
             row[f"p_n_{f}"] = d.get("n")
             row[f"p_navail_{f}"] = d.get("n_avail")
             row[f"p_fresh_{f}"] = d.get("n_fresh")
+            row[f"p_age_{f}"] = d.get("age_med")
         net = price_summary.get("net") or {}
         pf = net.get("per_fuel", {})
         for f in cfg.get("price_fuels", []):

@@ -57,8 +57,10 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
         fresh = cur(f"p_fresh_{f}")
         navail = cur(f"p_navail_{f}")
         now = cur(f"gb_now_{g}")
+        age = cur(f"p_age_{f}")
         low = fresh is None or fresh < min_fresh
-        diverge = bool(low and (now or 0) >= 40 and (now or 0) > 2 * (n or 1))
+        # источники расходятся: gdebenz «есть» на многих, а свежих цен единицы
+        diverge = bool((now or 0) >= 40 and (now or 0) >= 3 * ((fresh or 0) + 1))
         s = bd._fuel_summary(f, hist, drows, cfg)
         fuels[f] = {
             "grade": g, "color": FUEL_HEX[f],
@@ -66,8 +68,11 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             "price_d1": analytics.daily_delta(drows, f"p_med_{f}", 1),
             "price_d7": analytics.daily_delta(drows, f"p_med_{f}", 7),
             "n": _int(n), "fresh": _int(fresh), "navail": _int(navail), "now": _int(now),
+            "age": age,
             "share_all": _pct(n, tot), "work_pct": _pct(navail, n),
             "low": low, "diverge": diverge,
+            # priceReliable/priceSuspect проставим ниже, когда известны все марки
+            "priceReliable": not low, "priceSuspect": False,
             "spread": cur(f"net_spread_{f}"),
             "spread_d7": analytics.daily_delta(drows, f"net_spread_{f}", 7),
             "summary": {"level": s["level"], "state": s["state"], "trend": s["trend"],
@@ -80,6 +85,21 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
                 "net": col(f"net_net_{f}"), "indep": col(f"net_indep_{f}"),
             },
         }
+
+    # «Октановый абсурд»: цена марки не может быть выше более высокооктановой —
+    # если так, выборка по этой марке кривая (мало точек, дорогие маргиналы).
+    ladder = ["АИ-92", "АИ-95", "АИ-98", "АИ-100"]
+    for i, f in enumerate(ladder):
+        p = fuels[f]["price"]
+        if p is None:
+            continue
+        for hf in ladder[i + 1:]:
+            hp = fuels[hf]["price"]
+            if hp is not None and not fuels[hf]["low"] and p > hp + 0.01:
+                fuels[f]["priceSuspect"] = True
+                break
+    for f in FUELS:
+        fuels[f]["priceReliable"] = not fuels[f]["low"] and not fuels[f]["priceSuspect"]
 
     payload = {
         "empty": False,
@@ -115,6 +135,7 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
         "alerts": _alerts_list(hist, cfg),
         "brandsPrice": _brands_price(price_stations, tot),
         "brandsGd": _brands_gd(gd_stations),
+        "geo": _geo(gd_stations),
     }
     return payload
 
@@ -182,6 +203,33 @@ def _brands_price(stations, tot):
         out.append({"brand": b, "n": a["n"],
                     "prices": {f: (round(median(a["p"][f]), 2) if a["p"][f] else None) for f in FUELS}})
     return out
+
+
+def _geo(stations):
+    """Срез наличия Москва↔область по координатам gdebenz: внутри МКАД vs за МКАД.
+    Порог — расстояние от центра Москвы (грубый прокси «город/область»)."""
+    if not stations:
+        return None
+    import math
+    clat, clon, R = 55.7558, 37.6173, 19.0  # км, ≈радиус МКАД
+    acc = {"in": {"resp": 0, "yes": 0}, "out": {"resp": 0, "yes": 0}}
+    for s in stations:
+        lat, lon, stt = s.get("lat"), s.get("lon"), s.get("status")
+        if lat is None or lon is None or stt not in ("yes", "no", "queue", "low"):
+            continue
+        dlat = math.radians(lat - clat)
+        dlon = math.radians(lon - clon)
+        a = (math.sin(dlat / 2) ** 2
+             + math.cos(math.radians(clat)) * math.cos(math.radians(lat)) * math.sin(dlon / 2) ** 2)
+        km = 2 * 6371 * math.asin(min(1, math.sqrt(a)))
+        side = "in" if km <= R else "out"
+        acc[side]["resp"] += 1
+        if stt in ("yes", "queue", "low"):  # «есть» (в т.ч. с трудом)
+            acc[side]["yes"] += 1
+    def pack(d):
+        return {"resp": d["resp"], "yes": d["yes"],
+                "pct": round(100 * d["yes"] / d["resp"]) if d["resp"] else None}
+    return {"in": pack(acc["in"]), "out": pack(acc["out"])}
 
 
 def _brands_gd(stations):
