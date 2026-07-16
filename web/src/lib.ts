@@ -30,6 +30,15 @@ export function deltaTone(v: Num, goodWhenUp: boolean): string {
 // --- цвета ---
 export const fuelVar = (token: string) => `var(--${token})`;
 
+// светофор доступности
+const TRAFFIC: Record<string, string> = {
+  green: "var(--good)",
+  yellow: "var(--warn)",
+  red: "var(--crit)",
+  gray: "var(--muted)",
+};
+export const trafficColor = (lvl: string) => TRAFFIC[lvl] ?? "var(--muted)";
+
 const LEVEL_VAR: Record<Level, string> = {
   good: "var(--good)",
   warn: "var(--warn)",

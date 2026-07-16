@@ -226,9 +226,12 @@ def collect_prices(cfg):
         "azs_available": len(azs_av),
         "fuels": {},
     }
+    fresh_min = cfg.get("min_fresh_prices", 30)       # FRESH_MIN — порог доверия цене
     for fuel in fuels:
         allp, freshp = prices(azs, fuel)
-        base = freshp if len(freshp) >= 5 else allp   # мало свежих — берём все
+        # медиане доверяем ТОЛЬКО при достаточной свежей выборке; иначе цена = None
+        # (не откатываемся на старьё — это рождало «октановый абсурд» 98>100)
+        base = freshp if len(freshp) >= fresh_min else []
         st = price_stats(base)
         st["n"] = len(allp)                           # продают (все с ценой)
         st["n_fresh"] = len(freshp)

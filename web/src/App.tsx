@@ -4,8 +4,7 @@ import { Skeleton } from "./ui";
 import {
   Header,
   FuelSelector,
-  Assistant,
-  KpiRow,
+  Hero,
   FuelCards,
   Charts,
   BrandTables,
@@ -53,11 +52,22 @@ function Dashboard({ data, fuel, setFuel }: { data: Data; fuel: string; setFuel:
       <Header d={data} />
       <FuelSelector d={data} active={fuel} onPick={setFuel} />
       <Alerts d={data} />
-      <Assistant f={f} />
-      <KpiRow d={data} f={f} />
+      <Hero d={data} f={f} />
       <FuelCards d={data} active={fuel} onPick={setFuel} />
-      <Charts d={data} f={f} />
-      <BrandTables d={data} />
+
+      <details className="mt-8 group">
+        <summary
+          className="cursor-pointer select-none rounded-xl border px-4 py-2.5 text-sm font-medium"
+          style={{ background: "var(--surface)", borderColor: "var(--border)", color: "var(--ink2)" }}
+        >
+          Подробности и графики (цены, тренды, бренды, гео)
+        </summary>
+        <div className="mt-2">
+          <Charts d={data} f={f} />
+          <BrandTables d={data} />
+        </div>
+      </details>
+
       <Footer d={data} />
     </>
   );

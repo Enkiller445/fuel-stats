@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Data, Fuel } from "./types";
-import { rub, pct, int, fuelVar, LEVEL_LABEL, clsx, plural, ageText } from "./lib";
+import { rub, pct, int, fuelVar, LEVEL_LABEL, clsx, plural, ageText, trafficColor } from "./lib";
 import { Card, Chip, Plaque, Delta, Help, Verdict, Sparkline, SectionTitle } from "./ui";
 import { LineTrend, StatusStack, Bars, SpreadChart } from "./charts";
 import * as V from "./verdicts";
@@ -66,7 +66,59 @@ export function FuelSelector({
   );
 }
 
-// -------------------------------------------------------- Assistant panel
+// ------------------------------------------------------------- Hero verdict
+export function Hero({ d, f }: { d: Data; f: Fuel }) {
+  const c = trafficColor(f.level);
+  const fc = fuelVar(f.color);
+  const grade = f.grade === "ДТ" ? "ДТ" : "АИ-" + f.grade;
+  const tot = d.overall.azsTotal;
+  return (
+    <Card className="mt-4" accent={c}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-base font-bold" style={{ color: fc }}>{grade}</span>
+        <span className="h-3 w-3 rounded-full" style={{ background: c }} />
+        <span className="text-2xl font-bold leading-tight" style={{ color: "var(--ink)" }}>
+          {f.verdict.word}
+        </span>
+      </div>
+
+      <p className="mt-2 text-lg" style={{ color: "var(--ink)" }}>{f.verdict.action}.</p>
+
+      <div className="mt-3 flex flex-wrap items-baseline gap-x-2 text-sm" style={{ color: "var(--ink2)" }}>
+        {f.availShare != null ? (
+          <>
+            <span>Есть на</span>
+            <span className="text-lg font-bold tnum" style={{ color: c }}>{int(f.navail)}</span>
+            <span>из {int(tot)} АЗС</span>
+            <span className="font-semibold tnum" style={{ color: c }}>({f.availShare}%)</span>
+          </>
+        ) : (
+          <span>Данных о наличии пока нет.</span>
+        )}
+        {f.blinded && (
+          <span style={{ color: "var(--muted)" }}>· по отметкам ~{int(f.now)} АЗС</span>
+        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full px-2 py-0.5" style={{ background: `color-mix(in srgb, ${c} 15%, transparent)`, color: c }}>
+          {f.verdict.confBadge}
+        </span>
+        <span style={{ color: "var(--muted)" }}>
+          Цена: {f.priceTrusted ? <b style={{ color: "var(--ink)" }}>{rub(f.price)}</b> : "нет надёжной"}
+        </span>
+      </div>
+
+      <div className="mt-3 border-t pt-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+        <span>Куда идёт: </span>
+        <span style={{ color: f.verdict.trendState === "down" ? "var(--crit)" : "var(--muted)" }}>{f.verdict.trendLabel}.</span>
+        {d.cityAvail != null && <span> Массовые марки (92/95/ДТ) — есть на ~{d.cityAvail}% АЗС.</span>}
+      </div>
+    </Card>
+  );
+}
+
+// -------------------------------------------------------- Assistant panel (legacy, в деталях)
 export function Assistant({ f }: { f: Fuel }) {
   const c = fuelVar(f.color);
   const s = f.summary;
@@ -236,50 +288,46 @@ export function KpiRow({ d, f }: { d: Data; f: Fuel }) {
 // --------------------------------------------------------------- Fuel cards
 export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPick: (f: string) => void }) {
   const tot = d.overall.azsTotal;
+  // порядок по честной доступности (редкие — вниз), null в конец
+  const order = [...d.fuels].sort((a, b) => (d.byFuel[b].availShare ?? -1) - (d.byFuel[a].availShare ?? -1));
   return (
     <>
-      <SectionTitle>Все марки</SectionTitle>
+      <SectionTitle
+        help={<Help title="Реальная доступность">Доля ВСЕХ АЗС города, где марку сейчас можно залить (не «среди продающих» — иначе редкая марка выглядит доступнее массовой). Абсолют «N из {tot}» важнее процента.</Help>}
+      >
+        Все марки · по доступности
+      </SectionTitle>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {d.fuels.map((name) => {
+        {order.map((name) => {
           const f = d.byFuel[name];
-          const c = fuelVar(f.color);
+          const fc = fuelVar(f.color);
+          const c = trafficColor(f.level);
           const on = name === active;
-          const age = ageText(f.age, d.freshDays);
           return (
             <button key={name} onClick={() => onPick(name)} className="text-left">
-              <Card accent={on ? c : undefined} dim={!f.priceReliable} className={clsx(on && "ring-2")}>
+              <Card accent={on ? fc : undefined} className={clsx(on && "ring-2")}>
                 <div className="flex items-center justify-between">
-                  <span className="font-bold" style={{ color: c }}>
-                    {name}
+                  <span className="font-bold" style={{ color: fc }}>{name}</span>
+                  <span className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: c }}>
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: c }} />
+                    {f.verdict.word}
                   </span>
-                  {!f.priceReliable ? (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "color-mix(in srgb, var(--warn) 20%, transparent)", color: "var(--warn)" }}>
-                      ЦЕНА НЕНАДЁЖНА
-                    </span>
-                  ) : (
-                    <Chip level={f.summary.level}>{LEVEL_LABEL[f.summary.level]}</Chip>
-                  )}
                 </div>
                 <div className="mt-2 flex items-baseline gap-2">
-                  <span className="text-xl font-bold tnum" style={{ color: f.priceReliable ? "var(--ink)" : "var(--muted)" }}>
-                    {f.priceReliable ? rub(f.price) : `≈${rub(f.price)}`}
+                  <span className="text-xl font-bold tnum" style={{ color: c }}>
+                    {f.availShare != null ? `${int(f.navail)} из ${int(tot)}` : "нет данных"}
                   </span>
-                  <span className="text-[11px]" style={{ color: age.stale ? "var(--warn)" : "var(--muted)" }}>
-                    {f.priceReliable ? age.text : `по ${int(f.fresh)} ценам`}
-                  </span>
-                </div>
-                <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                  Продают на {int(f.n)} из {int(tot)}
-                  {f.share_all != null && (
-                    <b style={{ color: f.share_all < 25 ? "var(--serious)" : "var(--ink2)" }}> · {f.share_all}% всех</b>
+                  {f.availShare != null && (
+                    <span className="text-sm font-semibold tnum" style={{ color: c }}>{f.availShare}%</span>
                   )}
                 </div>
-                <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
-                  Работают {pct(f.work_pct)} · gdebenz {int(f.now)} «есть»
+                <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                  {f.priceTrusted ? <>Цена <b style={{ color: "var(--ink2)" }}>{rub(f.price)}</b></> : "Цена: нет надёжной"}
+                  {" · "}по отметкам {int(f.now)} АЗС
                 </div>
-                {f.diverge && (
-                  <div className="mt-1 text-xs leading-snug" style={{ color: "var(--warn)" }}>
-                    ⚠ gdebenz: {int(f.now)} «есть», а свежих цен {int(f.fresh)} — наличие вида под вопросом
+                {f.availConf === "low" && (
+                  <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                    {f.blinded ? "petrolplus почти не видит марку — оценка снизу" : "данных мало — оценка снизу"}
                   </div>
                 )}
               </Card>

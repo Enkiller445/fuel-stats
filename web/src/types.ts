@@ -3,6 +3,17 @@
 export type Level = "good" | "warn" | "serious" | "crit";
 export type Num = number | null;
 
+// светофор доступности
+export type TrafficLevel = "green" | "yellow" | "red" | "gray";
+
+export interface Verdict {
+  word: string; // «Есть почти везде» / «Есть не на каждой» / «Редко» / «Наличие не подтверждено»
+  action: string;
+  trendLabel: string;
+  confBadge: string;
+  trendState: string; // накопление | up | down | stable
+}
+
 export interface Summary {
   level: Level;
   state: string;
@@ -32,6 +43,16 @@ export interface Fuel {
   navail: Num;
   now: Num;
   age: Num; // медианный возраст цен, дней
+  // --- trust-first (ведущие) ---
+  availShare: Num; // navail / все АЗС, % — честная доступность
+  r: Num; // now/navail — согласие источников
+  gdShare: Num; // now / ответившие gdebenz, %
+  blinded: boolean; // petrolplus почти не видит марку → вести по gdebenz
+  availConf: "high" | "low";
+  level: TrafficLevel;
+  verdict: Verdict;
+  priceTrusted: boolean; // показывать ли цену
+  // --- прежние (в свёрнутых деталях) ---
   share_all: Num; // % от всех АЗС региона
   work_pct: Num; // % работающих среди продающих
   low: boolean; // мало свежих цен
@@ -87,6 +108,9 @@ export interface Data {
   fresh: { pricesAgo: string; pricesOk: boolean; gdAgo: string; gdOk: boolean };
   fuels: string[];
   defaultFuel: string;
+  cityAvail: Num; // медиана availShare массовых марок
+  gdResp: Num;
+  monDays: number;
   byFuel: Record<string, Fuel>;
   overall: Overall;
   days: string[];

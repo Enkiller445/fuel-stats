@@ -35,6 +35,11 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
     for r in hist:
         pp, gd = bd._av_pcts(r)
         r["work_pp"], r["gd_bal"] = pp, gd
+        # availShare по каждой марке (для честного тренда: navail / полная база)
+        tot_r = analytics._val(r, "azs_total")
+        for f in FUELS:
+            nv = analytics._val(r, f"p_navail_{f}")
+            r[f"avs_{f}"] = round(100 * nv / tot_r, 1) if (nv is not None and tot_r) else None
 
     days, drows = analytics.daily_sample(hist, cfg.get("daily_sample_hour", 20))
     dlabels = [d.strftime("%d.%m") for d in days]
@@ -49,6 +54,19 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
     def col(name):
         return analytics.col(drows, name)
 
+    # --- trust-first константы/помощники ---
+    mon_days = analytics.monitoring_days(hist)
+    gd_resp = sum(x for x in (cur("gb_yes"), cur("gb_no"), cur("gb_queue"), cur("gb_low"))
+                  if x is not None) or None
+    WORD = {"green": "Есть почти везде", "yellow": "Есть не на каждой",
+            "red": "Редко", "gray": "Наличие не подтверждено"}
+    ACT = {"green": "заправляйтесь как обычно", "yellow": "планируйте, держите запас",
+           "red": "держите бак полным, ищите заранее", "gray": "данные не удалось подтвердить сейчас"}
+    TRW = {"up": "Ситуация выправляется", "down": "Дефицит усиливается", "stable": "Стабильно"}
+
+    def _clamp(v, lo, hi):
+        return max(lo, min(hi, v))
+
     # --- по каждой марке ---
     fuels = {}
     for f in FUELS:
@@ -59,8 +77,45 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
         now = cur(f"gb_now_{g}")
         age = cur(f"p_age_{f}")
         low = fresh is None or fresh < min_fresh
-        # источники расходятся: gdebenz «есть» на многих, а свежих цен единицы
         diverge = bool((now or 0) >= 40 and (now or 0) >= 3 * ((fresh or 0) + 1))
+
+        # честная доступность = navail / полная база (не среди продающих)
+        avail_share = _int(_clamp(round(100 * navail / tot), 0, 100)) if (navail is not None and tot) else None
+        r = round(now / navail, 2) if (now is not None and navail) else None
+        gd_share = _int(round(100 * now / gd_resp)) if (now is not None and gd_resp) else None
+        pp_healthy = (fresh is not None and fresh >= min_fresh) and (age is None or age <= 12)
+        blinded = bool(r is not None and r > 3 and not pp_healthy)  # petrolplus ослеп по марке
+        # уверенность в НАЛИЧИИ (не в цене): выборка, ослепление, крошечный n
+        avail_conf = "low" if ((navail is None) or (n is None) or (n < 8) or blinded) else "high"
+
+        # уровень-светофор: кандидат по availShare -> шортедж-пул r<0.4 -> кап conf/age
+        if n is None or n == 0 or avail_share is None or (now is None and navail is None):
+            level = "gray"
+        else:
+            level = "green" if avail_share >= 50 else ("yellow" if avail_share >= 20 else "red")
+            if level == "green" and r is not None and r < 0.4:
+                level = "yellow"                      # умеренный дефицит массовой марки
+            if level == "green" and (avail_conf == "low" or (age is not None and age > 12)):
+                level = "yellow"                      # зелёный запрещён при LOW / старье
+
+        # тренд по Δ(availShare); пока <3 дней — честное «накопление»
+        tr = analytics.daily_delta(drows, f"avs_{f}", 3)
+        if mon_days < 3 or tr is None:
+            trend_state = "накопление"
+        elif tr <= -3:
+            trend_state = "down"
+        elif tr >= 3:
+            trend_state = "up"
+        else:
+            trend_state = "stable"
+
+        if trend_state == "down" and level in ("green", "yellow"):
+            action = "залейтесь в ближайшие дни — предложение снижается"
+        else:
+            action = ACT[level]
+        trend_label = ("Наблюдаем первые дни — направление появится через ~3 суток"
+                       if trend_state == "накопление" else TRW[trend_state])
+
         s = bd._fuel_summary(f, hist, drows, cfg)
         fuels[f] = {
             "grade": g, "color": FUEL_HEX[f],
@@ -69,10 +124,16 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             "price_d7": analytics.daily_delta(drows, f"p_med_{f}", 7),
             "n": _int(n), "fresh": _int(fresh), "navail": _int(navail), "now": _int(now),
             "age": age,
+            # --- trust-first поля (ведущие) ---
+            "availShare": avail_share, "r": r, "gdShare": gd_share, "blinded": blinded,
+            "availConf": avail_conf, "level": level,
+            "verdict": {"word": WORD[level], "action": action, "trendLabel": trend_label,
+                        "confBadge": "данные надёжны" if avail_conf == "high" else "данных мало, оценка снизу",
+                        "trendState": trend_state},
+            # --- прежние поля (для свёрнутых деталей/легаси) ---
             "share_all": _pct(n, tot), "work_pct": _pct(navail, n),
             "low": low, "diverge": diverge,
-            # priceReliable/priceSuspect проставим ниже, когда известны все марки
-            "priceReliable": not low, "priceSuspect": False,
+            "priceReliable": not low, "priceSuspect": False, "priceTrusted": False,
             "spread": cur(f"net_spread_{f}"),
             "spread_d7": analytics.daily_delta(drows, f"net_spread_{f}", 7),
             "summary": {"level": s["level"], "state": s["state"], "trend": s["trend"],
@@ -86,8 +147,7 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             },
         }
 
-    # «Октановый абсурд»: цена марки не может быть выше более высокооктановой —
-    # если так, выборка по этой марке кривая (мало точек, дорогие маргиналы).
+    # «Октановый абсурд» TOL 0.10 ₽ -> priceSuspect; затем priceTrusted (что показывать)
     ladder = ["АИ-92", "АИ-95", "АИ-98", "АИ-100"]
     for i, f in enumerate(ladder):
         p = fuels[f]["price"]
@@ -95,11 +155,15 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             continue
         for hf in ladder[i + 1:]:
             hp = fuels[hf]["price"]
-            if hp is not None and not fuels[hf]["low"] and p > hp + 0.01:
+            if hp is not None and not fuels[hf]["low"] and p > hp + 0.10:
                 fuels[f]["priceSuspect"] = True
                 break
     for f in FUELS:
-        fuels[f]["priceReliable"] = not fuels[f]["low"] and not fuels[f]["priceSuspect"]
+        fd = fuels[f]
+        fd["priceReliable"] = not fd["low"] and not fd["priceSuspect"]
+        a = fd["age"]
+        # цену показываем ТОЛЬКО при доверии: есть медиана (fresh>=FRESH_MIN) + не старьё + не абсурд
+        fd["priceTrusted"] = bool(fd["price"] is not None and (a is None or a <= 12) and not fd["priceSuspect"])
 
     payload = {
         "empty": False,
@@ -112,6 +176,11 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
                   "gdAgo": g_ago, "gdOk": gs.get("ok")},
         "fuels": FUELS,
         "defaultFuel": "АИ-95",
+        # честная городская строка: медиана availShare массовых марок (не workPp — тот про открытые АЗС)
+        "cityAvail": (lambda m: _int(round(median(m))) if m else None)(
+            [fuels[x]["availShare"] for x in ("АИ-92", "АИ-95", "ДТ") if fuels[x]["availShare"] is not None]),
+        "gdResp": _int(gd_resp),
+        "monDays": mon_days,
         "byFuel": fuels,
         "overall": {
             "workPp": cur("work_pp"), "workPp_d1": analytics.daily_delta(drows, "work_pp", 1),
