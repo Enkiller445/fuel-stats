@@ -44,7 +44,8 @@ export interface Fuel {
   now: Num;
   age: Num; // медианный возраст цен, дней
   // --- trust-first (ведущие) ---
-  availShare: Num; // navail / все АЗС, % — честная доступность
+  availShare: Num; // navail / все АЗС, % — ВЕРХНЯЯ граница (в прайсе + станция работает)
+  physShare: Num; // now / все АЗС, % — НИЖНЯЯ граница (физически подтверждено gdebenz)
   r: Num; // now/navail — согласие источников
   gdShare: Num; // now / ответившие gdebenz, %
   blinded: boolean; // petrolplus почти не видит марку → вести по gdebenz
@@ -108,7 +109,8 @@ export interface Data {
   fresh: { pricesAgo: string; pricesOk: boolean; gdAgo: string; gdOk: boolean };
   fuels: string[];
   defaultFuel: string;
-  cityAvail: Num; // медиана availShare массовых марок
+  cityAvail: Num; // медиана availShare массовых марок (верхняя)
+  cityPhys: Num; // медиана physShare массовых марок (нижняя)
   gdResp: Num;
   monDays: number;
   byFuel: Record<string, Fuel>;

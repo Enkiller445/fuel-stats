@@ -84,21 +84,24 @@ export function Hero({ d, f }: { d: Data; f: Fuel }) {
 
       <p className="mt-2 text-lg" style={{ color: "var(--ink)" }}>{f.verdict.action}.</p>
 
-      <div className="mt-3 flex flex-wrap items-baseline gap-x-2 text-sm" style={{ color: "var(--ink2)" }}>
-        {f.availShare != null ? (
-          <>
-            <span>Есть на</span>
-            <span className="text-lg font-bold tnum" style={{ color: c }}>{int(f.navail)}</span>
-            <span>из {int(tot)} АЗС</span>
-            <span className="font-semibold tnum" style={{ color: c }}>({f.availShare}%)</span>
-          </>
-        ) : (
-          <span>Данных о наличии пока нет.</span>
-        )}
-        {f.blinded && (
-          <span style={{ color: "var(--muted)" }}>· по отметкам ~{int(f.now)} АЗС</span>
-        )}
-      </div>
+      {f.availShare != null || f.physShare != null ? (
+        <div className="mt-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-bold tnum" style={{ color: c }}>
+              {f.physShare ?? 0}–{f.availShare ?? f.physShare}%
+            </span>
+            <span className="text-sm" style={{ color: "var(--muted)" }}>АЗС с этой маркой</span>
+          </div>
+          <div className="mt-1 text-xs" style={{ color: "var(--ink2)" }}>
+            подтверждено людьми ~<b>{int(f.now)}</b> · в прайсе и работают <b>{int(f.navail)}</b> из {int(tot)}
+          </div>
+          <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
+            открытая станция не значит, что {grade} залито — правда между оценками
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm" style={{ color: "var(--muted)" }}>Данных о наличии пока нет.</p>
+      )}
 
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-full px-2 py-0.5" style={{ background: `color-mix(in srgb, ${c} 15%, transparent)`, color: c }}>
@@ -112,7 +115,9 @@ export function Hero({ d, f }: { d: Data; f: Fuel }) {
       <div className="mt-3 border-t pt-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
         <span>Куда идёт: </span>
         <span style={{ color: f.verdict.trendState === "down" ? "var(--crit)" : "var(--muted)" }}>{f.verdict.trendLabel}.</span>
-        {d.cityAvail != null && <span> Массовые марки (92/95/ДТ) — есть на ~{d.cityAvail}% АЗС.</span>}
+        {d.cityPhys != null && d.cityAvail != null && (
+          <span> Массовые марки (92/95/ДТ) — на ~{d.cityPhys}–{d.cityAvail}% АЗС.</span>
+        )}
       </div>
     </Card>
   );
@@ -288,12 +293,12 @@ export function KpiRow({ d, f }: { d: Data; f: Fuel }) {
 // --------------------------------------------------------------- Fuel cards
 export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPick: (f: string) => void }) {
   const tot = d.overall.azsTotal;
-  // порядок по честной доступности (редкие — вниз), null в конец
-  const order = [...d.fuels].sort((a, b) => (d.byFuel[b].availShare ?? -1) - (d.byFuel[a].availShare ?? -1));
+  // порядок по нижней (физической) оценке — редкие вниз
+  const order = [...d.fuels].sort((a, b) => (d.byFuel[b].physShare ?? -1) - (d.byFuel[a].physShare ?? -1));
   return (
     <>
       <SectionTitle
-        help={<Help title="Реальная доступность">Доля ВСЕХ АЗС города, где марку сейчас можно залить (не «среди продающих» — иначе редкая марка выглядит доступнее массовой). Абсолют «N из {tot}» важнее процента.</Help>}
+        help={<Help title="Доступность — диапазон">Две границы (правда между ними): «подтв.» — сколько АЗС людей отметили наличие сейчас (gdebenz, нижняя, краудсорс недосчитывает); «в прайсе» — сколько держат марку в прайсе И станция работает (petrolplus, верхняя). Но открытая станция ≠ марка залита, поэтому светофор — по нижней границе, не завышаем.</Help>}
       >
         Все марки · по доступности
       </SectionTitle>
@@ -313,23 +318,19 @@ export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPi
                     {f.verdict.word}
                   </span>
                 </div>
-                <div className="mt-2 flex items-baseline gap-2">
+                <div className="mt-2">
                   <span className="text-xl font-bold tnum" style={{ color: c }}>
-                    {f.availShare != null ? `${int(f.navail)} из ${int(tot)}` : "нет данных"}
+                    {f.availShare != null || f.physShare != null
+                      ? `${f.physShare ?? 0}–${f.availShare ?? f.physShare}%`
+                      : "нет данных"}
                   </span>
-                  {f.availShare != null && (
-                    <span className="text-sm font-semibold tnum" style={{ color: c }}>{f.availShare}%</span>
-                  )}
                 </div>
                 <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                  {f.priceTrusted ? <>Цена <b style={{ color: "var(--ink2)" }}>{rub(f.price)}</b></> : "Цена: нет надёжной"}
-                  {" · "}по отметкам {int(f.now)} АЗС
+                  подтв. {int(f.now)} · в прайсе {int(f.navail)} из {int(tot)}
                 </div>
-                {f.availConf === "low" && (
-                  <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                    {f.blinded ? "petrolplus почти не видит марку — оценка снизу" : "данных мало — оценка снизу"}
-                  </div>
-                )}
+                <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
+                  {f.priceTrusted ? <>Цена <b style={{ color: "var(--ink2)" }}>{rub(f.price)}</b></> : "Цена: нет надёжной"}
+                </div>
               </Card>
             </button>
           );

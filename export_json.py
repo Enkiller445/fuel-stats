@@ -83,26 +83,37 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
         low = fresh is None or fresh < min_fresh
         diverge = bool((now or 0) >= 40 and (now or 0) >= 3 * ((fresh or 0) + 1))
 
-        # честная доступность = navail / полная база (не среди продающих)
+        # ДВЕ границы доступности (обе несовершенны, правда между ними):
+        #  ceilShare (petrolplus) = navail/все — ВЕРХНЯЯ: в прайсе И станция работает.
+        #    НО «работает» — station-level (отпускает любое топливо), не значит, что ЭТА марка залита.
+        #  physEst (gdebenz)      = now/ответившие — физически подтверждено людьми (оценка снизу, краудсорс).
         avail_share = _int(_clamp(round(100 * navail / tot), 0, 100)) if (navail is not None and tot) else None
+        phys_share = _int(round(100 * now / tot)) if (now is not None and tot) else None   # подтверждено, % всех
+        gd_share = _int(round(100 * now / gd_resp)) if (now is not None and gd_resp) else None  # физ. оценка
         r = round(now / navail, 2) if (now is not None and navail) else None
-        # r, нормированный на покрытие gdebenz (= gd_share/availShare) — устойчив к размеру выборки
         r_norm = round(r / gd_cover, 2) if (r is not None and gd_cover) else None
-        gd_share = _int(round(100 * now / gd_resp)) if (now is not None and gd_resp) else None
         pp_healthy = (fresh is not None and fresh >= min_fresh) and (age is None or age <= 12)
         blinded = bool(r is not None and r > 3 and not pp_healthy)  # petrolplus ослеп по марке
-        # уверенность в НАЛИЧИИ (не в цене): выборка, ослепление, крошечный n
         avail_conf = "low" if ((navail is None) or (n is None) or (n < 8) or blinded) else "high"
 
-        # уровень-светофор: кандидат по availShare -> шортедж-пул r<0.4 -> кап conf/age
-        if n is None or n == 0 or avail_share is None or (now is None and navail is None):
+        # светофор — по ХУДШЕЙ из двух границ: не называем «есть», пока физически не подтвердили
+        RANK = {"green": 3, "yellow": 2, "red": 1}
+        def _band(sh):
+            if sh is None:
+                return None
+            return "green" if sh >= 50 else ("yellow" if sh >= 20 else "red")
+        if avail_share is None and now is None:
             level = "gray"
+        elif now is None:                              # физически не подтверждено — не выше жёлтого
+            b = _band(avail_share)
+            level = "yellow" if b == "green" else b
+        elif avail_share is None:
+            level = _band(gd_share) or "gray"
         else:
-            level = "green" if avail_share >= 50 else ("yellow" if avail_share >= 20 else "red")
-            if level == "green" and r_norm is not None and r_norm < 0.4:
-                level = "yellow"                      # умеренный дефицит массовой марки (по нормированному r)
-            if level == "green" and (avail_conf == "low" or (age is not None and age > 12)):
-                level = "yellow"                      # зелёный запрещён при LOW / старье
+            bands = [b for b in (_band(avail_share), _band(gd_share)) if b]
+            level = min(bands, key=lambda x: RANK[x]) if bands else "gray"
+            if level == "green" and (age is not None and age > 12):
+                level = "yellow"                       # зелёный запрещён при старье
 
         # тренд по Δ(availShare); пока <3 дней — честное «накопление»
         tr = analytics.daily_delta(drows, f"avs_{f}", 3)
@@ -131,7 +142,8 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             "n": _int(n), "fresh": _int(fresh), "navail": _int(navail), "now": _int(now),
             "age": age,
             # --- trust-first поля (ведущие) ---
-            "availShare": avail_share, "r": r, "rNorm": r_norm, "gdShare": gd_share, "blinded": blinded,
+            "availShare": avail_share, "physShare": phys_share, "gdShare": gd_share,
+            "r": r, "rNorm": r_norm, "blinded": blinded,
             "availConf": avail_conf, "level": level,
             "verdict": {"word": WORD[level], "action": action, "trendLabel": trend_label,
                         "confBadge": "данные надёжны" if avail_conf == "high" else "данных мало, оценка снизу",
@@ -182,9 +194,11 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
                   "gdAgo": g_ago, "gdOk": gs.get("ok")},
         "fuels": FUELS,
         "defaultFuel": "АИ-95",
-        # честная городская строка: медиана availShare массовых марок (не workPp — тот про открытые АЗС)
+        # городская строка по массовым маркам: диапазон физ.подтверждено ↔ в прайсе+работает
         "cityAvail": (lambda m: _int(round(median(m))) if m else None)(
             [fuels[x]["availShare"] for x in ("АИ-92", "АИ-95", "ДТ") if fuels[x]["availShare"] is not None]),
+        "cityPhys": (lambda m: _int(round(median(m))) if m else None)(
+            [fuels[x]["physShare"] for x in ("АИ-92", "АИ-95", "ДТ") if fuels[x]["physShare"] is not None]),
         "gdResp": _int(gd_resp),
         "monDays": mon_days,
         "byFuel": fuels,
