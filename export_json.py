@@ -58,6 +58,10 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
     mon_days = analytics.monitoring_days(hist)
     gd_resp = sum(x for x in (cur("gb_yes"), cur("gb_no"), cur("gb_queue"), cur("gb_low"))
                   if x is not None) or None
+    # покрытие gdebenz в этом прогоне: краудсорс собирает то больше, то меньше АЗС.
+    # Нормируем r на покрытие, иначе меньшая выборка gdebenz роняет r у ВСЕХ марок
+    # и ложно красит массовые марки в жёлтый (шум сбора, а не дефицит).
+    gd_cover = gd_resp / tot if (gd_resp and tot) else None
     WORD = {"green": "Есть почти везде", "yellow": "Есть не на каждой",
             "red": "Редко", "gray": "Наличие не подтверждено"}
     ACT = {"green": "заправляйтесь как обычно", "yellow": "планируйте, держите запас",
@@ -82,6 +86,8 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
         # честная доступность = navail / полная база (не среди продающих)
         avail_share = _int(_clamp(round(100 * navail / tot), 0, 100)) if (navail is not None and tot) else None
         r = round(now / navail, 2) if (now is not None and navail) else None
+        # r, нормированный на покрытие gdebenz (= gd_share/availShare) — устойчив к размеру выборки
+        r_norm = round(r / gd_cover, 2) if (r is not None and gd_cover) else None
         gd_share = _int(round(100 * now / gd_resp)) if (now is not None and gd_resp) else None
         pp_healthy = (fresh is not None and fresh >= min_fresh) and (age is None or age <= 12)
         blinded = bool(r is not None and r > 3 and not pp_healthy)  # petrolplus ослеп по марке
@@ -93,8 +99,8 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             level = "gray"
         else:
             level = "green" if avail_share >= 50 else ("yellow" if avail_share >= 20 else "red")
-            if level == "green" and r is not None and r < 0.4:
-                level = "yellow"                      # умеренный дефицит массовой марки
+            if level == "green" and r_norm is not None and r_norm < 0.4:
+                level = "yellow"                      # умеренный дефицит массовой марки (по нормированному r)
             if level == "green" and (avail_conf == "low" or (age is not None and age > 12)):
                 level = "yellow"                      # зелёный запрещён при LOW / старье
 
@@ -125,7 +131,7 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             "n": _int(n), "fresh": _int(fresh), "navail": _int(navail), "now": _int(now),
             "age": age,
             # --- trust-first поля (ведущие) ---
-            "availShare": avail_share, "r": r, "gdShare": gd_share, "blinded": blinded,
+            "availShare": avail_share, "r": r, "rNorm": r_norm, "gdShare": gd_share, "blinded": blinded,
             "availConf": avail_conf, "level": level,
             "verdict": {"word": WORD[level], "action": action, "trendLabel": trend_label,
                         "confBadge": "данные надёжны" if avail_conf == "high" else "данных мало, оценка снизу",
