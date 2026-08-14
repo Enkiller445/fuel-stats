@@ -19,6 +19,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 20        # зависший прогон падает быстро, а не висит часами
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
