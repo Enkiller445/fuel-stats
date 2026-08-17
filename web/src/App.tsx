@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import type { Data } from "./types";
+import type { AllData, Data } from "./types";
 import { Skeleton } from "./ui";
 import {
   Header,
   FuelSelector,
   Hero,
   FuelCards,
+  FocusStations,
   Charts,
   BrandTables,
   Alerts,
@@ -13,9 +14,10 @@ import {
 } from "./sections";
 
 export default function App() {
-  const [data, setData] = useState<Data | null>(null);
+  const [all, setAll] = useState<AllData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [fuel, setFuel] = useState<string>("АИ-95");
+  const [region, setRegion] = useState<string>("");
 
   useEffect(() => {
     fetch(`${import.meta.env.BASE_URL}data.json?v=${Date.now()}`)
@@ -23,24 +25,63 @@ export default function App() {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((d: Data) => {
-        setData(d);
-        if (d.defaultFuel) setFuel(d.defaultFuel);
+      .then((d: AllData) => {
+        setAll(d);
+        setRegion(d.defaultRegion || d.regions?.[0]?.slug || "");
+        const f = d.regions?.[0]?.defaultFuel;
+        if (f) setFuel(f);
       })
       .catch((e) => setErr(String(e)));
   }, []);
+
+  const regions = all?.regions ?? [];
+  const data = regions.find((r) => r.slug === region) ?? regions[0];
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:py-8">
       {err ? (
         <Fail msg={err} />
-      ) : !data ? (
+      ) : !all ? (
         <Loading />
-      ) : data.empty ? (
-        <Empty />
       ) : (
-        <Dashboard data={data} fuel={fuel} setFuel={setFuel} />
+        <>
+          {regions.length > 1 && (
+            <RegionTabs regions={regions} active={data?.slug ?? ""} onPick={setRegion} />
+          )}
+          {!data || data.empty ? <Empty /> : <Dashboard data={data} fuel={fuel} setFuel={setFuel} />}
+        </>
       )}
+    </div>
+  );
+}
+
+function RegionTabs({
+  regions,
+  active,
+  onPick,
+}: {
+  regions: Data[];
+  active: string;
+  onPick: (s: string) => void;
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap gap-1.5 rounded-xl border p-1" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+      {regions.map((r) => {
+        const on = r.slug === active;
+        return (
+          <button
+            key={r.slug}
+            onClick={() => onPick(r.slug)}
+            className="rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-colors"
+            style={{
+              background: on ? "var(--ink)" : "transparent",
+              color: on ? "var(--surface)" : "var(--ink2)",
+            }}
+          >
+            {r.short || r.name}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -54,6 +95,7 @@ function Dashboard({ data, fuel, setFuel }: { data: Data; fuel: string; setFuel:
       <Alerts d={data} />
       <Hero d={data} f={f} />
       <FuelCards d={data} active={fuel} onPick={setFuel} />
+      <FocusStations d={data} />
 
       <details className="mt-8 group">
         <summary

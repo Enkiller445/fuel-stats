@@ -16,14 +16,23 @@ HISTORY = os.path.join(DATA_DIR, "history.csv")
 STATUS = os.path.join(DATA_DIR, "status.json")
 
 
+def history_path(slug=None):
+    """Файл истории региона. msk (первый регион) — легаси history.csv, чтобы не потерять
+    накопленные данные; остальные регионы пишут history_<slug>.csv."""
+    if not slug or slug == "msk":
+        return HISTORY
+    return os.path.join(DATA_DIR, f"history_{slug}.csv")
+
+
 def _fieldnames(cfg):
     fn = ["ts_utc", "ts_msk", "azs_total", "azs_available"]
     for f in cfg.get("price_fuels", []):
         fn += [f"p_med_{f}", f"p_p10_{f}", f"p_p90_{f}", f"p_min_{f}",
                f"p_max_{f}", f"p_n_{f}", f"p_navail_{f}", f"p_fresh_{f}", f"p_age_{f}"]
-    fn += ["gb_total", "gb_yes", "gb_no", "gb_queue", "gb_low", "gb_unknown"]
+    fn += ["gb_total", "gb_yes", "gb_no", "gb_queue", "gb_low", "gb_unknown",
+           "gb_seen_fresh", "gb_seen_any"]
     for g in cfg.get("gdebenz_grades", []):
-        fn += [f"gb_now_{g}"]
+        fn += [f"gb_now_{g}", f"cp_{g}", f"cpn_{g}"]   # крауд-цена и по скольким АЗС
     for f in cfg.get("price_fuels", []):
         fn += [f"net_net_{f}", f"net_indep_{f}", f"net_spread_{f}"]
     fn += ["net95_med", "net95_n", "indep95_med", "indep95_n", "spread95"]
@@ -70,34 +79,39 @@ def build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary):
         row["gb_queue"] = gd_summary["n_queue"]
         row["gb_low"] = gd_summary["n_low"]
         row["gb_unknown"] = gd_summary["n_unknown"]
+        row["gb_seen_fresh"] = gd_summary.get("seen_fresh")
+        row["gb_seen_any"] = gd_summary.get("seen_any")
         for g in cfg.get("gdebenz_grades", []):
             row[f"gb_now_{g}"] = gd_summary["now"].get(g)
+            row[f"cp_{g}"] = (gd_summary.get("cprice") or {}).get(g)
+            row[f"cpn_{g}"] = (gd_summary.get("cprice_n") or {}).get(g)
     return row
 
 
-def append_history(cfg, row):
+def append_history(cfg, row, path=None):
     """Дозаписать строку. При изменении схемы (напр. добавили колонку) файл
     прозрачно мигрируется: новый заголовок = желаемые поля + существующие лишние
     (чтобы не терять старые данные), старые строки добиваются пустыми значениями."""
     os.makedirs(DATA_DIR, exist_ok=True)
+    path = path or HISTORY
     desired = _fieldnames(cfg)
-    if os.path.exists(HISTORY):
-        with open(HISTORY, encoding="utf-8", newline="") as f:
+    if os.path.exists(path):
+        with open(path, encoding="utf-8", newline="") as f:
             existing = next(csv.reader(f), [])
         fields = desired + [c for c in existing if c not in desired]
         if fields != existing:                      # схема изменилась — мигрируем
-            with open(HISTORY, encoding="utf-8", newline="") as f:
+            with open(path, encoding="utf-8", newline="") as f:
                 old_rows = list(csv.DictReader(f))
-            with open(HISTORY, "w", encoding="utf-8", newline="") as f:
+            with open(path, "w", encoding="utf-8", newline="") as f:
                 w = csv.DictWriter(f, fieldnames=fields, restval="")
                 w.writeheader()
                 for r in old_rows:
                     w.writerow({k: r.get(k, "") for k in fields})
     else:
         fields = desired
-        with open(HISTORY, "w", encoding="utf-8", newline="") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             csv.DictWriter(f, fieldnames=fields).writeheader()
-    with open(HISTORY, "a", encoding="utf-8", newline="") as f:
+    with open(path, "a", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore", restval="")
         w.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fields})
 
@@ -108,11 +122,12 @@ def write_json(path, obj):
         json.dump(obj, f, ensure_ascii=False)
 
 
-def load_history():
-    if not os.path.exists(HISTORY):
+def load_history(path=None):
+    path = path or HISTORY
+    if not os.path.exists(path):
         return []
     out = []
-    with open(HISTORY, encoding="utf-8", newline="") as f:
+    with open(path, encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
             rec = {}
             for k, v in row.items():

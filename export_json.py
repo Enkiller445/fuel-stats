@@ -12,6 +12,7 @@ from statistics import median
 import store
 import analytics
 import build_dashboard as bd
+import geo
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 FUELS = bd.FUELS
@@ -23,11 +24,17 @@ def _lv(hist, c):
     return analytics._val(hist[-1], c) if hist else None
 
 
-def build_payload(base_dir, price_stations=None, gd_stations=None):
-    with open(os.path.join(base_dir, "config.json"), encoding="utf-8") as f:
-        cfg = json.load(f)
-    hist = store.load_history()
-    status = store.load_json(store.STATUS) or {}
+def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, cfg=None, status=None):
+    if cfg is None:
+        with open(os.path.join(base_dir, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    region = region or {}
+    slug = region.get("slug", "msk")
+    hist = store.load_history(store.history_path(slug))
+    if status is None:
+        status = store.load_json(store.STATUS) or {}
+    if slug != "msk":                       # статус региона лежит в своей ветке
+        status = (status.get("regions") or {}).get(slug) or {}
     if not hist:
         return {"empty": True}
 
@@ -56,6 +63,7 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
 
     # --- trust-first константы/помощники ---
     mon_days = analytics.monitoring_days(hist)
+    gb_total = cur("gb_total")
     gd_resp = sum(x for x in (cur("gb_yes"), cur("gb_no"), cur("gb_queue"), cur("gb_low"))
                   if x is not None) or None
     # покрытие gdebenz в этом прогоне: краудсорс собирает то больше, то меньше АЗС.
@@ -84,14 +92,27 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
         diverge = bool((now or 0) >= 40 and (now or 0) >= 3 * ((fresh or 0) + 1))
 
         # ДВЕ границы доступности (обе несовершенны, правда между ними):
-        #  ceilShare (petrolplus) = navail/все — ВЕРХНЯЯ: в прайсе И станция работает.
+        #  availShare (petrolplus) = navail/azs_total — ВЕРХНЯЯ: в прайсе И станция работает.
         #    НО «работает» — station-level (отпускает любое топливо), не значит, что ЭТА марка залита.
-        #  physEst (gdebenz)      = now/ответившие — физически подтверждено людьми (оценка снизу, краудсорс).
+        #  physShare  (gdebenz)    = now/gb_total — физически подтверждено людьми (оценка снизу).
+        # ВАЖНО: каждая доля считается ВНУТРИ своего каталога. Базы разного размера
+        # (в Тверской petrolplus знает ~130 АЗС, gdebenz ~290) — деля крауд-числитель на
+        # каталог petrolplus, мы бы раздули долю вдвое.
         avail_share = _int(_clamp(round(100 * navail / tot), 0, 100)) if (navail is not None and tot) else None
-        phys_share = _int(round(100 * now / tot)) if (now is not None and tot) else None   # подтверждено, % всех
+        phys_base = gb_total or tot
+        phys_share = _int(_clamp(round(100 * now / phys_base), 0, 100)) if (now is not None and phys_base) else None
         gd_share = _int(round(100 * now / gd_resp)) if (now is not None and gd_resp) else None  # физ. оценка
         r = round(now / navail, 2) if (now is not None and navail) else None
         r_norm = round(r / gd_cover, 2) if (r is not None and gd_cover) else None
+        # крауд-цена: доверяем только если её дали хотя бы MIN_CPN АЗС (иначе шум одиночек)
+        MIN_CPN = 10
+        cpn = cur(f"cpn_{g}")
+        cprice = cur(f"cp_{g}") if (cpn or 0) >= MIN_CPN else None
+        pp_price = cur(f"p_med_{f}")
+        price_agree = None
+        if cprice is not None and pp_price:
+            price_agree = round(cprice - pp_price, 2)   # расхождение крауд vs прайс, ₽
+
         pp_healthy = (fresh is not None and fresh >= min_fresh) and (age is None or age <= 12)
         blinded = bool(r is not None and r > 3 and not pp_healthy)  # petrolplus ослеп по марке
         avail_conf = "low" if ((navail is None) or (n is None) or (n < 8) or blinded) else "high"
@@ -144,6 +165,8 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
             # --- trust-first поля (ведущие) ---
             "availShare": avail_share, "physShare": phys_share, "gdShare": gd_share,
             "r": r, "rNorm": r_norm, "blinded": blinded,
+            # крауд-цена (новое поле gdebenz prices_now): независимая проверка цены petrolplus
+            "cPrice": cprice, "cPriceN": _int(cpn), "priceAgree": price_agree,
             "availConf": avail_conf, "level": level,
             "verdict": {"word": WORD[level], "action": action, "trendLabel": trend_label,
                         "confBadge": "данные надёжны" if avail_conf == "high" else "данных мало, оценка снизу",
@@ -224,17 +247,45 @@ def build_payload(base_dir, price_stations=None, gd_stations=None):
         "alerts": _alerts_list(hist, cfg),
         "brandsPrice": _brands_price(price_stations, tot),
         "brandsGd": _brands_gd(gd_stations),
-        "geo": _geo(gd_stations),
+        "geo": _focus_split(gd_stations, region.get("focus")),
+        "focusName": (region.get("focus") or {}).get("name"),
+        "focusOther": (region.get("focus") or {}).get("other_name"),
+        "focusStations": _focus_stations(gd_stations, price_stations, cfg),
+        # свежесть наблюдений (новое: у крауд-цен есть время — раньше времени не было вовсе)
+        "seenFresh": _int(cur("gb_seen_fresh")), "seenAny": _int(cur("gb_seen_any")),
+        "gbTotal": _int(gb_total),
     }
     return payload
 
 
-def write(base_dir, price_stations=None, gd_stations=None):
-    payload = build_payload(base_dir, price_stations, gd_stations)
+def write(base_dir, snapshots=None, price_stations=None, gd_stations=None):
+    """snapshots: {slug: (price_stations, gd_stations)} — снимки из текущего прогона.
+    price_stations/gd_stations — легаси-путь (один регион msk)."""
+    with open(os.path.join(base_dir, "config.json"), encoding="utf-8") as f:
+        cfg = json.load(f)
+    status = store.load_json(store.STATUS) or {}
+    regions = cfg.get("regions") or [{"slug": "msk", "name": cfg.get("region_name", "")}]
+    if snapshots is None:
+        snapshots = {"msk": (price_stations, gd_stations)}
+
+    out = {"regions": [], "defaultRegion": regions[0]["slug"]}
+    for reg in regions:
+        ps, gd = snapshots.get(reg["slug"], (None, None))
+        p = build_payload(base_dir, ps, gd, region=reg, cfg=cfg, status=status)
+        p["slug"] = reg["slug"]
+        p["name"] = reg.get("name", "")
+        p["short"] = reg.get("short") or reg.get("name", "")
+        out["regions"].append(p)
+    # легаси-совместимость: поля первого региона на верхнем уровне
+    first = out["regions"][0]
+    if not first.get("empty"):
+        out.update({k: v for k, v in first.items() if k not in ("slug", "name", "short")})
+    out["empty"] = all(r.get("empty") for r in out["regions"])
+
     out_dir = os.path.join(base_dir, "web", "public")
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "data.json"), "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     return os.path.join(out_dir, "data.json")
 
 
@@ -266,6 +317,11 @@ def _alerts_list(hist, cfg):
     out = []
     yes = analytics._val(hist[-1], "gb_yes")
     ymin = al.get("avail_yes_min")
+    # порог задан для московского масштаба (~1250 АЗС) — масштабируем под размер региона,
+    # иначе в Тверской (292 станции) он срабатывает всегда и врёт
+    gbt = analytics._val(hist[-1], "gb_total")
+    if ymin is not None and gbt:
+        ymin = ymin * gbt / 1250.0
     if yes is not None and ymin is not None and yes < ymin:
         out.append(f"Мало сообщений «есть»: {int(yes)} (порог {int(ymin)}) — возможен дефицит.")
     thr = al.get("price_day_rise_pct")
@@ -310,31 +366,59 @@ def _brands_price(stations, tot):
     return petrol + none
 
 
-def _geo(stations):
-    """Срез наличия Москва↔область по координатам gdebenz: внутри МКАД vs за МКАД.
-    Порог — расстояние от центра Москвы (грубый прокси «город/область»)."""
-    if not stations:
+def _focus_split(stations, focus):
+    """Срез «фокус региона ↔ остальное» по координатам gdebenz.
+    Для Москвы фокус = внутри МКАД, для Тверской = Конаковский район."""
+    if not stations or not focus:
         return None
-    import math
-    clat, clon, R = 55.7558, 37.6173, 19.0  # км, ≈радиус МКАД
     acc = {"in": {"resp": 0, "yes": 0}, "out": {"resp": 0, "yes": 0}}
     for s in stations:
-        lat, lon, stt = s.get("lat"), s.get("lon"), s.get("status")
-        if lat is None or lon is None or stt not in ("yes", "no", "queue", "low"):
+        stt = s.get("status")
+        if stt not in ("yes", "no", "queue", "low"):
             continue
-        dlat = math.radians(lat - clat)
-        dlon = math.radians(lon - clon)
-        a = (math.sin(dlat / 2) ** 2
-             + math.cos(math.radians(clat)) * math.cos(math.radians(lat)) * math.sin(dlon / 2) ** 2)
-        km = 2 * 6371 * math.asin(min(1, math.sqrt(a)))
-        side = "in" if km <= R else "out"
+        inf = s.get("focus")
+        if inf is None:
+            inf = geo.in_focus(s.get("lat"), s.get("lon"), focus)
+        if inf is None:
+            continue
+        side = "in" if inf else "out"
         acc[side]["resp"] += 1
         if stt in ("yes", "queue", "low"):  # «есть» (в т.ч. с трудом)
             acc[side]["yes"] += 1
+
     def pack(d):
         return {"resp": d["resp"], "yes": d["yes"],
                 "pct": round(100 * d["yes"] / d["resp"]) if d["resp"] else None}
     return {"in": pack(acc["in"]), "out": pack(acc["out"])}
+
+
+def _focus_stations(gd_stations, price_stations, cfg, limit=14):
+    """Поимённый список АЗС фокуса. В маленьком районе (Конаковский: ~20 точек)
+    поимённо полезнее любых процентов — видно, куда конкретно ехать."""
+    if not gd_stations:
+        return []
+    grades = [G[f] for f in FUELS]
+    STW = {"yes": "есть", "queue": "очередь", "low": "мало", "no": "нет"}
+    out = []
+    for s in gd_stations:
+        if not s.get("focus"):
+            continue
+        fs = {x.strip() for x in (s.get("fuels_now") or "").split(",") if x.strip()}
+        out.append({
+            "brand": bd._norm_brand(s.get("brand")),
+            "addr": (s.get("addr") or "").strip(),
+            "status": s.get("status"),
+            "statusText": STW.get(s.get("status")),
+            "fuels": [g for g in grades if g in fs],
+            "seenH": s.get("seen_h"),
+        })
+    # свежесть: наблюдение старше STALE_H — не «сейчас», уводим вниз и помечаем
+    STALE_H = cfg.get("crowd_fresh_hours", 48)
+    for x in out:
+        x["stale"] = bool(x["seenH"] is None or x["seenH"] > STALE_H)
+    rank = {"yes": 0, "queue": 1, "low": 2, "no": 3, None: 4}
+    out.sort(key=lambda x: (x["stale"], rank.get(x["status"], 4), -(len(x["fuels"])), x["brand"]))
+    return out[:limit]
 
 
 def _brands_gd(stations):

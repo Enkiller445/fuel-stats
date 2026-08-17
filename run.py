@@ -44,12 +44,45 @@ def main():
     print(f"=== Прогон {ts_msk} МСК · {cfg.get('region_name')} ===")
 
     status = store.load_json(store.STATUS) or {}
+    snapshots = {}
+    regions = cfg.get("regions") or [{"slug": "msk", "name": cfg.get("region_name", "")}]
+
+    # --- доп. регионы (кроме первого): свои файлы истории, свой блок статуса ---
+    status.setdefault("regions", {})
+    for reg in regions[1:]:
+        slug, rname = reg["slug"], reg.get("name", reg["slug"])
+        rst = status["regions"].setdefault(slug, {})
+        rps = rgd = None
+        try:
+            rps, rpst = collect.collect_prices(cfg, reg)
+            rst["prices"] = {"ok": True, "ts_msk": ts_msk, "error": None,
+                             "azs_total": rps["azs_total"], "azs_available": rps["azs_available"]}
+            print(f"  [{rname}] Цены: АЗС {rps['azs_total']} / отпускают {rps['azs_available']}")
+        except Exception as e:
+            rst.setdefault("prices", {}).update({"ok": False, "error": str(e)})
+            print(f"  [{rname}] ЦЕНЫ: ОШИБКА:", e)
+            rpst = None
+        try:
+            rgd, rgst = collect_gdebenz.collect_availability(cfg, reg)
+            rst["gdebenz"] = {"ok": True, "ts_msk": ts_msk, "error": None,
+                              "total": rgd["total"], "yes": rgd["n_yes"], "no": rgd["n_no"]}
+            print(f"  [{rname}] Наличие: станций {rgd['total']}, есть {rgd['n_yes']}, нет {rgd['n_no']}")
+        except Exception as e:
+            rst.setdefault("gdebenz", {}).update({"ok": False, "error": str(e)})
+            print(f"  [{rname}] НАЛИЧИЕ: ОШИБКА:", e)
+            rgst = None
+        rst["last_run_msk"] = ts_msk
+        if rps or rgd:
+            store.append_history(cfg, store.build_row(cfg, ts_utc, ts_msk, rps, rgd),
+                                 path=store.history_path(slug))
+        snapshots[slug] = (rpst, rgst)
+
     price_summary = gd_summary = None
     price_stations = gd_stations = None
 
-    # 1) Цены
+    # 1) Цены (первый регион — легаси-путь: history.csv + public/index.html)
     try:
-        price_summary, price_stations = collect.collect_prices(cfg)
+        price_summary, price_stations = collect.collect_prices(cfg, regions[0])
         status["prices"] = {"ok": True, "ts_msk": ts_msk, "error": None,
                             "azs_total": price_summary["azs_total"],
                             "azs_available": price_summary["azs_available"]}
@@ -64,7 +97,7 @@ def main():
 
     # 2) Наличие
     try:
-        gd_summary, gd_stations = collect_gdebenz.collect_availability(cfg)
+        gd_summary, gd_stations = collect_gdebenz.collect_availability(cfg, regions[0])
         status["gdebenz"] = {"ok": True, "ts_msk": ts_msk, "error": None,
                              "total": gd_summary["total"], "yes": gd_summary["n_yes"],
                              "no": gd_summary["n_no"]}
@@ -105,8 +138,8 @@ def main():
 
     # 4b) data.json для нового React-дашборда (web/). Снимки станций — из памяти.
     try:
-        dj = export_json.write(BASE_DIR, price_stations=price_stations,
-                               gd_stations=gd_stations)
+        snapshots[regions[0]["slug"]] = (price_stations, gd_stations)
+        dj = export_json.write(BASE_DIR, snapshots=snapshots)
         print("  data.json собран:", dj)
     except Exception as e:
         print("  data.json: ОШИБКА:", e)

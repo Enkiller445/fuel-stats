@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 
 import xlrd
 
+import geo
+
 API = "https://locator.transitcard.ru/web/v1/report/points"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -28,8 +30,8 @@ HEADERS = {
 }
 
 
-def fetch_report(cfg, available_only):
-    bb = cfg["bbox"]
+def fetch_report(cfg, available_only, bbox=None):
+    bb = bbox or cfg["bbox"]
     params = {
         "pointTypes": cfg.get("point_types", "8;10"),
         "x1": bb["lat_min"], "x2": bb["lat_max"],
@@ -174,21 +176,29 @@ def _network_breakdown(azs, cfg, lo, hi, fresh_days, ref):
     return {"per_fuel": per_fuel, "by95": by95}
 
 
-def collect_prices(cfg):
+def collect_prices(cfg, region=None):
     """
-    Вернёт (summary, stations).
+    Вернёт (summary, stations). region — элемент cfg["regions"] (bbox + pp_region + focus).
       summary: {azs_total, azs_available, fuels:{fuel:{median,p10,p90,min,max,n,n_avail}}}
       stations: список АЗС с ценами по всем видам + флаг available (для последнего снимка)
     """
+    region = region or {}
+    bbox = region.get("bbox") or cfg["bbox"]
+    pp_region = region.get("pp_region")      # точный фильтр по колонке «Регион» (лучше полигона)
+    focus = region.get("focus")
+
     fuels = cfg.get("price_fuels", ["АИ-95", "АИ-98"])
     lo, hi = cfg.get("price_sane_min", 20.0), cfg.get("price_sane_max", 250.0)
     fresh_days = cfg.get("fresh_days", 14)
     ref = datetime.now(timezone.utc).date()
 
-    xls_all = fetch_report(cfg, available_only=False)
-    xls_av = fetch_report(cfg, available_only=True)
+    xls_all = fetch_report(cfg, available_only=False, bbox=bbox)
+    xls_av = fetch_report(cfg, available_only=True, bbox=bbox)
     rows_all, _ = parse_report(xls_all)
     rows_av, _ = parse_report(xls_av)
+    if pp_region:                            # оставляем только свой регион (bbox шире области)
+        rows_all = [r for r in rows_all if pp_region.lower() in (r.get("region") or "").lower()]
+        rows_av = [r for r in rows_av if pp_region.lower() in (r.get("region") or "").lower()]
     avail_keys = {station_key(r) for r in rows_av}
     for r in rows_all:
         r["_available"] = station_key(r) in avail_keys
@@ -248,6 +258,8 @@ def collect_prices(cfg):
         rec = {"brand": r.get("brand"), "region": r.get("region"),
                "city": r.get("city"), "address": r.get("address"),
                "available": bool(r["_available"]), "prices": {}}
+        # попадание в «фокус» региона — по названию города (координат petrolplus не даёт)
+        rec["focus"] = geo.city_in_focus(r.get("city"), r.get("address"), focus)
         for fuel in fuels:
             p = r.get(f"price_{fuel}")
             if p is not None and lo <= p <= hi:

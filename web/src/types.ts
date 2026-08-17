@@ -49,6 +49,9 @@ export interface Fuel {
   r: Num; // now/navail — согласие источников
   gdShare: Num; // now / ответившие gdebenz, %
   blinded: boolean; // petrolplus почти не видит марку → вести по gdebenz
+  cPrice: Num; // крауд-цена (gdebenz prices_now), если её дали ≥10 АЗС
+  cPriceN: Num; // по скольким АЗС
+  priceAgree: Num; // крауд − прайс, ₽ (независимая проверка)
   availConf: "high" | "low";
   level: TrafficLevel;
   verdict: Verdict;
@@ -99,7 +102,33 @@ export interface BrandGd {
   byFuel: Record<string, number>;
 }
 
+export interface FocusStation {
+  brand: string;
+  addr: string;
+  status: string | null;
+  statusText: string | null;
+  fuels: string[];
+  seenH: Num; // сколько часов назад видели
+  stale: boolean; // наблюдение старше порога — не «сейчас»
+}
+
+// Весь файл: несколько регионов (Москва, Тверская обл.)
+export interface AllData {
+  regions: Data[];
+  defaultRegion: string;
+  empty: boolean;
+}
+
 export interface Data {
+  slug: string;
+  name: string;
+  short: string;
+  focusName: string | null;
+  focusOther: string | null;
+  focusStations: FocusStation[];
+  seenFresh: Num;
+  seenAny: Num;
+  gbTotal: Num;
   empty: boolean;
   generatedMsk: string | null;
   region: string;

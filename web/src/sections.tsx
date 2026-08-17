@@ -11,12 +11,16 @@ export function Header({ d }: { d: Data }) {
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-          Бензин · {d.region || "Москва"}
+          Бензин · {d.name || d.region || "Москва"}
         </h1>
         <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
           Наблюдаем {d.monitoringDays}{" "}
-          {plural(d.monitoringDays, "день", "дня", "дней")} · {int(d.measurements)} замеров ·
+          {plural(d.monitoringDays, "день", "дня", "дней")} · {int(d.measurements)}{" "}
+          {plural(d.measurements, "замер", "замера", "замеров")} ·
           обновляется ежечасно
+          {d.seenFresh != null && d.seenAny ? (
+            <> · свежие отметки водителей: {int(d.seenFresh)} из {int(d.seenAny)} АЗС</>
+          ) : null}
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -110,6 +114,13 @@ export function Hero({ d, f }: { d: Data; f: Fuel }) {
         <span style={{ color: "var(--muted)" }}>
           Цена: {f.priceTrusted ? <b style={{ color: "var(--ink)" }}>{rub(f.price)}</b> : "нет надёжной"}
         </span>
+        {f.cPrice != null && (
+          <span style={{ color: f.priceAgree != null && Math.abs(f.priceAgree) <= 1 ? "var(--good)" : "var(--warn)" }}>
+            {f.priceAgree != null && Math.abs(f.priceAgree) <= 1
+              ? `✓ подтверждают водители (${rub(f.cPrice)}, ${int(f.cPriceN)} АЗС)`
+              : `водители видят ${rub(f.cPrice)} (${int(f.cPriceN)} АЗС)`}
+          </span>
+        )}
       </div>
 
       <div className="mt-3 border-t pt-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
@@ -412,8 +423,8 @@ function GeoCard({ d }: { d: Data }) {
   const g = d.geo;
   if (!g || (!g.in.resp && !g.out.resp)) return null;
   const rows = [
-    { label: "Внутри МКАД", s: g.in },
-    { label: "За МКАД (область)", s: g.out },
+    { label: d.focusName || "Внутри МКАД", s: g.in },
+    { label: d.focusOther || "За МКАД (область)", s: g.out },
   ];
   const diff = g.in.pct != null && g.out.pct != null ? g.in.pct - g.out.pct : null;
   return (
@@ -434,7 +445,7 @@ function GeoCard({ d }: { d: Data }) {
           </Help>
         }
       >
-        Наличие: город ↔ область
+        Наличие: {(d.focusName || "город").toLowerCase()} ↔ {(d.focusOther || "область").toLowerCase()}
       </SectionTitle>
       <Card>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -464,6 +475,71 @@ function Capt({ children, help }: { children: ReactNode; help?: ReactNode }) {
       {children}
       {help}
     </div>
+  );
+}
+
+// ------------------------------------------- Станции фокуса (напр. Конаковский р-н)
+const ST_COLOR: Record<string, string> = {
+  yes: "var(--good)",
+  queue: "var(--warn)",
+  low: "var(--serious)",
+  no: "var(--crit)",
+};
+
+export function FocusStations({ d }: { d: Data }) {
+  const list = d.focusStations ?? [];
+  if (!list.length) return null;
+  const withFuel = list.filter((s) => s.status === "yes" || s.status === "queue" || s.status === "low").length;
+  return (
+    <>
+      <SectionTitle
+        help={
+          <Help title="Конкретные АЗС">
+            В небольшом районе проценты бесполезны — важно, где именно есть топливо. Список из отметок
+            gdebenz: статус станции и какие марки отмечены. «Видели N ч назад» — свежесть последнего
+            наблюдения (новое поле источника). Это отметки людей, а не гарантия.
+            <Verdict>
+              Топливо подтверждено на {withFuel} из {list.length} показанных АЗС района.
+            </Verdict>
+          </Help>
+        }
+      >
+        {d.focusName || "Фокус"} · где есть топливо
+      </SectionTitle>
+      <Card>
+        <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+          {list.map((s, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2" style={{ opacity: s.stale ? 0.5 : 1 }}>
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.stale ? "var(--muted)" : ST_COLOR[s.status ?? ""] ?? "var(--muted)" }} />
+              <span className="font-medium" style={{ color: "var(--ink)" }}>{s.brand}</span>
+              {s.addr && <span className="text-xs" style={{ color: "var(--muted)" }}>{s.addr}</span>}
+              <span className="ml-auto flex items-center gap-2">
+                {s.fuels.length > 0 && (
+                  <span className="text-xs font-semibold tnum" style={{ color: "var(--ink2)" }}>
+                    {s.fuels.join(" · ")}
+                  </span>
+                )}
+                <span className="text-xs font-medium" style={{ color: s.stale ? "var(--muted)" : ST_COLOR[s.status ?? ""] ?? "var(--muted)" }}>
+                  {s.statusText ?? "нет данных"}
+                </span>
+                <span className="text-[11px] tnum" style={{ color: "var(--muted)" }}>
+                  {s.seenH == null
+                    ? "давно"
+                    : s.stale
+                      ? `${Math.round(s.seenH / 24)} дн назад`
+                      : s.seenH < 1
+                        ? "<1 ч"
+                        : `${Math.round(s.seenH)} ч`}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 text-[11px]" style={{ color: "var(--muted)" }}>
+          Отметки пользователей gdebenz — ориентир, не гарантия. Время — когда станцию видели последний раз.
+        </div>
+      </Card>
+    </>
   );
 }
 

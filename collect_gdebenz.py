@@ -8,8 +8,15 @@
 Экспортирует collect_availability(cfg) -> (summary, stations).
 """
 
+import statistics
 import time
+from datetime import datetime, timezone, timedelta
+
 import requests
+
+import geo
+
+MSK = timezone(timedelta(hours=3))
 
 HOME = "https://www.gdebenz.ru/"
 API = "https://www.gdebenz.ru/api/stations"
@@ -22,8 +29,8 @@ HEADERS = {
 }
 
 
-def fetch_stations(cfg):
-    bb = cfg["bbox"]
+def fetch_stations(cfg, bbox=None):
+    bb = bbox or cfg["bbox"]
     params = {"lat1": bb["lat_min"], "lon1": bb["lon_min"],
               "lat2": bb["lat_max"], "lon2": bb["lon_max"]}
     last = None
@@ -48,12 +55,43 @@ def _fuels_set(s):
     return {p.strip() for p in (s or "").split(",") if p.strip()}
 
 
-def collect_availability(cfg):
+def _price_age_hours(t, now_utc):
+    """Возраст крауд-цены в часах. t — 'YYYY-MM-DD HH:MM:SS' (МСК)."""
+    if not t:
+        return None
+    try:
+        dt = datetime.strptime(str(t).strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=MSK)
+    except Exception:
+        return None
+    return max(0.0, (now_utc - dt).total_seconds() / 3600.0)
+
+
+def collect_availability(cfg, region=None):
+    """Наличие + НОВОЕ: крауд-цены `prices_now` (у них есть время наблюдения и число
+    подтверждений). region — элемент cfg["regions"]: bbox + gd_polygon + focus."""
+    region = region or {}
+    bbox = region.get("bbox") or cfg["bbox"]
+    poly = region.get("gd_polygon")
+    focus = region.get("focus")
     grades = cfg.get("gdebenz_grades", ["92", "95", "98", "100", "ДТ"])
-    stations_raw = fetch_stations(cfg)
+    lo, hi = cfg.get("price_sane_min", 20.0), cfg.get("price_sane_max", 250.0)
+    fresh_h = cfg.get("crowd_fresh_hours", 48)
+    now_utc = datetime.now(timezone.utc)
+
+    stations_raw = fetch_stations(cfg, bbox=bbox)
+    # bbox шире области → отсекаем соседние регионы грубым полигоном
+    if poly:
+        stations_raw = [s for s in stations_raw
+                        if s.get("lat") is not None and s.get("lon") is not None
+                        and geo.in_polygon(s["lat"], s["lon"], poly)]
 
     summary = {"total": len(stations_raw), "n_yes": 0, "n_no": 0, "n_queue": 0,
-               "n_low": 0, "n_unknown": 0, "now": {g: 0 for g in grades}}
+               "n_low": 0, "n_unknown": 0, "now": {g: 0 for g in grades},
+               # крауд-цены: медиана свежих + сколько АЗС их дали
+               "cprice": {g: None for g in grades}, "cprice_n": {g: 0 for g in grades},
+               # свежесть наблюдений (раньше у отметок вообще не было времени)
+               "seen_fresh": 0, "seen_any": 0}
+    cvals = {g: [] for g in grades}
     stations = []
     for st in stations_raw:
         status = st.get("status")
@@ -63,9 +101,35 @@ def collect_availability(cfg):
         for g in grades:
             if g in fs:
                 summary["now"][g] += 1
+
+        # --- крауд-цены (новое поле prices_now) ---
+        pn = st.get("prices_now") or {}
+        age_min = None
+        for g, v in pn.items():
+            if g not in cvals or not isinstance(v, dict):
+                continue
+            p = v.get("p")
+            age = _price_age_hours(v.get("t"), now_utc)
+            if age is not None and (age_min is None or age < age_min):
+                age_min = age
+            # в медиану — только свежие и вменяемые
+            if p is not None and lo <= p <= hi and age is not None and age <= fresh_h:
+                cvals[g].append(float(p))
+        if age_min is not None:
+            summary["seen_any"] += 1
+            if age_min <= fresh_h:
+                summary["seen_fresh"] += 1
+
         stations.append({"brand": st.get("brand"), "addr": st.get("addr"),
                          "lat": st.get("lat"), "lon": st.get("lon"),
-                         "status": status, "fuels_now": st.get("fuels_now")})
+                         "status": status, "fuels_now": st.get("fuels_now"),
+                         "focus": geo.in_focus(st.get("lat"), st.get("lon"), focus),
+                         "seen_h": round(age_min, 1) if age_min is not None else None})
+
+    for g in grades:
+        if cvals[g]:
+            summary["cprice"][g] = round(statistics.median(cvals[g]), 2)
+            summary["cprice_n"][g] = len(cvals[g])
     return summary, stations
 
 
