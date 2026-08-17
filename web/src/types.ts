@@ -6,6 +6,26 @@ export type Num = number | null;
 // светофор доступности
 export type TrafficLevel = "green" | "yellow" | "red" | "gray";
 
+// «Когда заправляться»: профиль + автопроверка воспроизводимости
+export interface WhenProfile {
+  labels: string[];
+  values: number[]; // шанс застать топливо, %
+  best: string;
+  worst: string;
+  spread: number; // размах, п.п.
+  noise: number; // собственный шум, п.п.
+  reliability: number | null; // корреляция профилей 1-й и 2-й половины истории
+  trust: boolean; // можно ли советовать время
+}
+
+export interface Forecast {
+  lo: Num;
+  hi: Num;
+  typical: Num; // медианное изменение за сутки, п.п.
+  band: Num;
+  text: string;
+}
+
 export interface Verdict {
   word: string; // «Есть почти везде» / «Есть не на каждой» / «Редко» / «Наличие не подтверждено»
   action: string;
@@ -55,6 +75,7 @@ export interface Fuel {
   availConf: "high" | "low";
   level: TrafficLevel;
   verdict: Verdict;
+  forecast: Forecast | null;
   priceTrusted: boolean; // показывать ли цену
   // --- прежние (в свёрнутых деталях) ---
   share_all: Num; // % от всех АЗС региона
@@ -155,6 +176,9 @@ export interface Data {
   weekdays: string[];
   bestHour: number | null;
   bestDay: string | null;
+  weekdaySpread: Num; // размах доступности по дням недели, п.п.
+  whenHour: WhenProfile | null;
+  whenDay: WhenProfile | null;
   alerts: string[];
   brandsPrice: BrandPrice[];
   brandsGd: BrandGd[];

@@ -30,7 +30,7 @@ def _fieldnames(cfg):
         fn += [f"p_med_{f}", f"p_p10_{f}", f"p_p90_{f}", f"p_min_{f}",
                f"p_max_{f}", f"p_n_{f}", f"p_navail_{f}", f"p_fresh_{f}", f"p_age_{f}"]
     fn += ["gb_total", "gb_yes", "gb_no", "gb_queue", "gb_low", "gb_unknown",
-           "gb_seen_fresh", "gb_seen_any"]
+           "gb_seen_fresh", "gb_seen_any", "gb_n_report"]
     for g in cfg.get("gdebenz_grades", []):
         fn += [f"gb_now_{g}", f"cp_{g}", f"cpn_{g}"]   # крауд-цена и по скольким АЗС
     for f in cfg.get("price_fuels", []):
@@ -81,6 +81,7 @@ def build_row(cfg, ts_utc, ts_msk, price_summary, gd_summary):
         row["gb_unknown"] = gd_summary["n_unknown"]
         row["gb_seen_fresh"] = gd_summary.get("seen_fresh")
         row["gb_seen_any"] = gd_summary.get("seen_any")
+        row["gb_n_report"] = gd_summary.get("n_report")
         for g in cfg.get("gdebenz_grades", []):
             row[f"gb_now_{g}"] = gd_summary["now"].get(g)
             row[f"cp_{g}"] = (gd_summary.get("cprice") or {}).get(g)

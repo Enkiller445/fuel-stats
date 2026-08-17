@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Data, Fuel } from "./types";
+import type { Data, Fuel, WhenProfile } from "./types";
 import { rub, pct, int, fuelVar, LEVEL_LABEL, clsx, plural, ageText, trafficColor } from "./lib";
 import { Card, Chip, Plaque, Delta, Help, Verdict, Sparkline, SectionTitle } from "./ui";
 import { LineTrend, StatusStack, Bars, SpreadChart } from "./charts";
@@ -19,7 +19,7 @@ export function Header({ d }: { d: Data }) {
           {plural(d.measurements, "замер", "замера", "замеров")} ·
           обновляется ежечасно
           {d.seenFresh != null && d.seenAny ? (
-            <> · свежие отметки водителей: {int(d.seenFresh)} из {int(d.seenAny)} АЗС</>
+            <> · живых отметок водителей за 2 суток: {int(d.seenFresh)}</>
           ) : null}
         </p>
       </div>
@@ -126,6 +126,12 @@ export function Hero({ d, f }: { d: Data; f: Fuel }) {
       <div className="mt-3 border-t pt-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
         <span>Куда идёт: </span>
         <span style={{ color: f.verdict.trendState === "down" ? "var(--crit)" : "var(--muted)" }}>{f.verdict.trendLabel}.</span>
+        {f.forecast && (
+          <span>
+            {" "}Завтра ожидаем <b style={{ color: "var(--ink2)" }}>{f.forecast.lo}–{f.forecast.hi}%</b>{" "}
+            (за сутки обычно меняется на {f.forecast.typical} п.п.).
+          </span>
+        )}
         {d.cityPhys != null && d.cityAvail != null && (
           <span> Массовые марки (92/95/ДТ) — на ~{d.cityPhys}–{d.cityAvail}% АЗС.</span>
         )}
@@ -355,8 +361,6 @@ export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPi
 export function Charts({ d, f }: { d: Data; f: Fuel }) {
   const c = fuelVar(f.color);
   const grade = f.grade === "ДТ" ? "ДТ" : "АИ-" + f.grade;
-  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
-  const bestDayIdx = d.bestDay ? d.weekdays.indexOf(d.bestDay) : null;
   return (
     <>
       <SectionTitle help={<Help title="Цена — медиана">{V.vPrice(f)}</Help>}>Цена {grade}</SectionTitle>
@@ -401,20 +405,61 @@ export function Charts({ d, f }: { d: Data; f: Fuel }) {
         <SpreadChart labels={d.days} net={f.series.net} indep={f.series.indep} netColor={c} />
       </Card>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div>
-          <SectionTitle help={<Help title="Лучший час"><Verdict>{V.vBestHour(d.bestHour)}</Verdict></Help>}>Когда больше работающих АЗС</SectionTitle>
-          <Card>
-            <Bars labels={hours} vals={d.hourAvail} color="var(--good)" highlight={d.bestHour} />
-          </Card>
+      <WhenToRefuel w={d.whenHour} title="Когда заправляться · по часам" unit="ч" />
+      <WhenToRefuel w={d.whenDay} title="Когда заправляться · по дням недели" unit="" />
+    </>
+  );
+}
+
+// «Когда заправляться»: советуем время ТОЛЬКО если профиль воспроизводится на двух
+// независимых половинах истории. Иначе честно говорим, что разницы нет.
+function WhenToRefuel({ w, title, unit }: { w: WhenProfile | null; title: string; unit: string }) {
+  if (!w) return null;
+  const bestIdx = w.values.indexOf(Math.max(...w.values));
+  return (
+    <>
+      <SectionTitle
+        help={
+          <Help title="Как это проверено">
+            Шанс застать топливо = доля АЗС со статусом «есть/очередь/мало» среди ответивших (нормировано,
+            поэтому не зависит от того, что ночью отметок меньше). Профиль считаем отдельно по первой и
+            второй половине истории и сверяем: если картина повторяется — советуем время, если нет —
+            значит это случайные колебания.
+            <Verdict>
+              {w.trust
+                ? `Картина устойчива (совпадение ${w.reliability}). Лучше заправляться около ${w.best}, хуже всего ${w.worst}.`
+                : `Устойчивой разницы нет (совпадение половин ${w.reliability ?? "—"}, размах ${w.spread} п.п. при собственном шуме ${w.noise} п.п.). «Лучшее время» гуляет от месяца к месяцу — ехать можно когда удобно.`}
+            </Verdict>
+          </Help>
+        }
+      >
+        {title}
+      </SectionTitle>
+      <Card>
+        <div className="mb-2 text-sm" style={{ color: w.trust ? "var(--good)" : "var(--ink2)" }}>
+          {w.trust ? (
+            <>
+              Лучше всего около <b>{w.best}</b>, хуже всего <b>{w.worst}</b>.
+            </>
+          ) : (
+            <>
+              <b>Устойчивой разницы нет</b> — колебания в пределах шума ({w.spread} п.п. против {w.noise} п.п.
+              шума). Заправляйтесь когда удобно; если появится реальная закономерность, покажем её здесь.
+            </>
+          )}
         </div>
-        <div>
-          <SectionTitle help={<Help title="Лучший день"><Verdict>{V.vBestDay(d.bestDay)}</Verdict></Help>}>По дням недели</SectionTitle>
-          <Card>
-            <Bars labels={d.weekdays} vals={d.weekdayAvail} color="var(--good)" highlight={bestDayIdx} />
-          </Card>
+        <Bars
+          labels={w.labels}
+          vals={w.values}
+          color={w.trust ? "var(--good)" : "var(--muted)"}
+          highlight={w.trust ? bestIdx : null}
+          unit="%"
+          height={170}
+        />
+        <div className="mt-1 text-[11px]" style={{ color: "var(--muted)" }}>
+          Шанс застать топливо на АЗС, %{unit ? ` · по ${unit === "ч" ? "часам суток" : ""}` : ""}
         </div>
-      </div>
+      </Card>
     </>
   );
 }

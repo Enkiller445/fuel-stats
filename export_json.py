@@ -64,8 +64,12 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
     # --- trust-first константы/помощники ---
     mon_days = analytics.monitoring_days(hist)
     gb_total = cur("gb_total")
+    n_report = cur("gb_n_report")            # станции, сообщившие состав топлива
     gd_resp = sum(x for x in (cur("gb_yes"), cur("gb_no"), cur("gb_queue"), cur("gb_low"))
                   if x is not None) or None
+    # доля станций, которые вообще отпускают (устойчива к времени суток: размах 0.98x)
+    _pos = sum(x for x in (cur("gb_yes"), cur("gb_queue"), cur("gb_low")) if x is not None)
+    station_ok = (_pos / gd_resp) if gd_resp else None
     # покрытие gdebenz в этом прогоне: краудсорс собирает то больше, то меньше АЗС.
     # Нормируем r на покрытие, иначе меньшая выборка gdebenz роняет r у ВСЕХ марок
     # и ложно красит массовые марки в жёлтый (шум сбора, а не дефицит).
@@ -99,8 +103,17 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
         # (в Тверской petrolplus знает ~130 АЗС, gdebenz ~290) — деля крауд-числитель на
         # каталог petrolplus, мы бы раздули долю вдвое.
         avail_share = _int(_clamp(round(100 * navail / tot), 0, 100)) if (navail is not None and tot) else None
-        phys_base = gb_total or tot
-        phys_share = _int(_clamp(round(100 * now / phys_base), 0, 100)) if (now is not None and phys_base) else None
+        # Нижняя граница БЕЗ суточного шума.
+        # Проблема: now/gb_total скачет вдвое за сутки (ночью 16%, вечером 30%), потому что
+        # состав топлива (fuels_now) заполняется активностью людей, а не наличием.
+        # Решение: разложить на две устойчивые части (проверено на 41 дне, размах по часам 1.06x):
+        #   P(есть марка) = P(станция вообще отпускает) x P(есть марка | сообщили состав)
+        # Обе доли считаются внутри одного слоя, поэтому активность сокращается.
+        if now is not None and n_report and station_ok is not None:
+            phys_share = _int(_clamp(round(100 * station_ok * now / n_report), 0, 100))
+        else:                                   # старые строки истории (без n_report)
+            phys_base = gb_total or tot
+            phys_share = _int(_clamp(round(100 * now / phys_base), 0, 100)) if (now is not None and phys_base) else None
         gd_share = _int(round(100 * now / gd_resp)) if (now is not None and gd_resp) else None  # физ. оценка
         r = round(now / navail, 2) if (now is not None and navail) else None
         r_norm = round(r / gd_cover, 2) if (r is not None and gd_cover) else None
@@ -129,9 +142,11 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
             b = _band(avail_share)
             level = "yellow" if b == "green" else b
         elif avail_share is None:
-            level = _band(gd_share) or "gray"
+            level = _band(phys_share) or "gray"
         else:
-            bands = [b for b in (_band(avail_share), _band(gd_share)) if b]
+            # по ХУДШЕЙ из границ, но нижняя берётся УСТОЙЧИВАЯ (phys_share), а не gd_share:
+            # gd_share шумит вдвое за сутки, из-за чего цвет менялся от времени открытия сайта
+            bands = [b for b in (_band(avail_share), _band(phys_share)) if b]
             level = min(bands, key=lambda x: RANK[x]) if bands else "gray"
             if level == "green" and (age is not None and age > 12):
                 level = "yellow"                       # зелёный запрещён при старье
@@ -154,6 +169,24 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
         trend_label = ("Наблюдаем первые дни — направление появится через ~3 суток"
                        if trend_state == "накопление" else TRW[trend_state])
 
+        # --- прогноз на завтра ---
+        # Проверено скользящей проверкой на 21 дне: сложная модель (сегодня + жалобы «нет»)
+        # НЕ лучше наивной «завтра как сегодня» (1.81 vs 1.80 п.п.). Поэтому не выдумываем
+        # модель, а честно даём инерцию + измеренный разброс суточных изменений.
+        fc = None
+        if mon_days >= 7:
+            hist_avs = [x for x in col(f"avs_{f}") if x is not None]
+            if len(hist_avs) >= 7 and avail_share is not None:
+                jumps = [abs(hist_avs[i + 1] - hist_avs[i]) for i in range(len(hist_avs) - 1)]
+                jumps.sort()
+                typ = jumps[len(jumps) // 2]                      # медианное суточное изменение
+                band = max(2, round(jumps[int(0.9 * (len(jumps) - 1))]))   # p90 — честный коридор
+                fc = {"lo": _int(_clamp(round(avail_share - band), 0, 100)),
+                      "hi": _int(_clamp(round(avail_share + band), 0, 100)),
+                      "typical": round(typ, 1), "band": _int(band),
+                      "text": f"Завтра ожидаем примерно как сегодня: {avail_share - band}–{avail_share + band}%. "
+                              f"За сутки обычно меняется на {typ:.1f} п.п."}
+
         s = bd._fuel_summary(f, hist, drows, cfg)
         fuels[f] = {
             "grade": g, "color": FUEL_HEX[f],
@@ -168,6 +201,7 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
             # крауд-цена (новое поле gdebenz prices_now): независимая проверка цены petrolplus
             "cPrice": cprice, "cPriceN": _int(cpn), "priceAgree": price_agree,
             "availConf": avail_conf, "level": level,
+            "forecast": fc,
             "verdict": {"word": WORD[level], "action": action, "trendLabel": trend_label,
                         "confBadge": "данные надёжны" if avail_conf == "high" else "данных мало, оценка снизу",
                         "trendState": trend_state},
@@ -242,8 +276,13 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
         "hourAvail": _round_list(analytics.by_hour(hist, "azs_available")[0]),
         "weekdayAvail": _round_list(analytics.by_weekday(drows, "azs_available")),
         "weekdays": analytics.WEEKDAYS,
-        "bestHour": _best(analytics.by_hour(hist, "azs_available")[0], 6),
+        # «Когда заправляться»: профиль + автопроверка, можно ли ему верить (см. _when_profile)
+        "whenHour": _when_profile(hist, "hour"),
+        "whenDay": _when_profile(hist, "wd"),
+        "bestHour": None,
         "bestDay": _best_wd(analytics.by_weekday(drows, "azs_available")),
+        "weekdaySpread": _weekday_spread(drows),   # насколько вообще различаются дни
+
         "alerts": _alerts_list(hist, cfg),
         "brandsPrice": _brands_price(price_stations, tot),
         "brandsGd": _brands_gd(gd_stations),
@@ -305,6 +344,89 @@ def _round_list(vals):
 def _best(vals, minpts):
     have = [i for i, v in enumerate(vals) if v is not None]
     return max(have, key=lambda i: vals[i]) if len(have) >= minpts else None
+
+
+def _fuel_chance(r):
+    """Шанс застать топливо на станции = (есть+очередь+мало)/ответившие, %.
+    Нормировано на ответивших → не зависит от суточной активности краудсорса."""
+    y = analytics._val(r, "gb_yes"); n = analytics._val(r, "gb_no")
+    q = analytics._val(r, "gb_queue"); l = analytics._val(r, "gb_low")
+    if None in (y, n, q, l):
+        return None
+    resp = y + n + q + l
+    return 100 * (y + q + l) / resp if resp >= 100 else None
+
+
+def _when_profile(hist, key):
+    """Профиль «когда лучше заправляться» + ЧЕСТНАЯ проверка, можно ли ему верить.
+
+    Считаем профиль отдельно по первой и второй половине истории и смотрим, повторяется ли он
+    (корреляция). На 41 дне часы дали r=0.08, дни недели r=-0.27 — то есть «лучший час» гулял
+    (июль 12ч, август 09ч). Поэтому советуем время ТОЛЬКО при r>=0.5 и размахе больше шума,
+    иначе честно пишем «разницы нет». Когда данных станет больше (или начнётся острый дефицит
+    с очередями), проверка сама разрешит совет."""
+    from collections import defaultdict
+    rows = [r for r in hist if analytics.parse_ts(r)]
+    if len(rows) < 40:
+        return None
+
+    def keyof(r):
+        t = analytics.parse_ts(r)
+        return t.hour if key == "hour" else t.weekday()
+
+    def prof(rs, minn):
+        d = defaultdict(list)
+        for r in rs:
+            v = _fuel_chance(r)
+            if v is not None:
+                d[keyof(r)].append(v)
+        return {k: median(x) for k, x in d.items() if len(x) >= minn}, d
+
+    full, raw = prof(rows, 5)
+    if len(full) < 5:
+        return None
+    half = len(rows) // 2
+    pa, _ = prof(rows[:half], 3)
+    pb, _ = prof(rows[half:], 3)
+    ks = sorted(set(pa) & set(pb))
+    rel = None
+    if len(ks) >= 5:
+        xs = [pa[k] for k in ks]; ys = [pb[k] for k in ks]
+        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        den = ((sum((x - mx) ** 2 for x in xs)) * (sum((y - my) ** 2 for y in ys))) ** 0.5
+        rel = round(num / den, 2) if den else None
+
+    noise = median([statistics_pstdev(x) for x in raw.values() if len(x) >= 5]) or 0
+    best = max(full, key=full.get); worst = min(full, key=full.get)
+    spread = full[best] - full[worst]
+    trust = bool(rel is not None and rel >= 0.5 and spread > 1.5 * noise)
+    return {
+        "labels": [f"{k:02d}" for k in sorted(full)] if key == "hour"
+                  else [analytics.WEEKDAYS[k] for k in sorted(full)],
+        "values": [round(full[k], 1) for k in sorted(full)],
+        "best": (f"{best:02d}:00" if key == "hour" else analytics.WEEKDAYS[best]),
+        "worst": (f"{worst:02d}:00" if key == "hour" else analytics.WEEKDAYS[worst]),
+        "spread": round(spread, 1), "noise": round(noise, 1),
+        "reliability": rel, "trust": trust,
+    }
+
+
+def statistics_pstdev(x):
+    import statistics as _s
+    return _s.pstdev(x) if len(x) > 1 else 0.0
+
+
+def _weekday_spread(drows):
+    """Размах доступности по дням недели, п.п. Меньше ~3 — разница в пределах шума."""
+    vals = [v for v in analytics.by_weekday(drows, "azs_available") if v is not None]
+    if len(vals) < 5:
+        return None
+    tot = [analytics._val(r, "azs_total") for r in drows]
+    base = median([t for t in tot if t]) if any(tot) else None
+    if not base:
+        return None
+    return round(100 * (max(vals) - min(vals)) / base, 1)
 
 
 def _best_wd(vals):

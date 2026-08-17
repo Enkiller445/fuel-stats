@@ -89,8 +89,10 @@ def collect_availability(cfg, region=None):
                "n_low": 0, "n_unknown": 0, "now": {g: 0 for g in grades},
                # крауд-цены: медиана свежих + сколько АЗС их дали
                "cprice": {g: None for g in grades}, "cprice_n": {g: 0 for g in grades},
-               # свежесть наблюдений (раньше у отметок вообще не было времени)
-               "seen_fresh": 0, "seen_any": 0}
+               # свежесть ЖИВЫХ наблюдений (n>=1), не импорта цен
+               "seen_fresh": 0, "seen_any": 0,
+               # сколько станций сообщили состав топлива (знаменатель доли марки)
+               "n_report": 0}
     cvals = {g: [] for g in grades}
     stations = []
     for st in stations_raw:
@@ -102,7 +104,10 @@ def collect_availability(cfg, region=None):
             if g in fs:
                 summary["now"][g] += 1
 
-        # --- крауд-цены (новое поле prices_now) ---
+        # --- крауд-цены (prices_now) ---
+        # ВАЖНО: n=0 — это ИМПОРТ цен сети роботом (сотни записей с одинаковым `t`),
+        # а не визит человека. За «когда станцию видели» считаем только n>=1,
+        # иначе «видели 3 ч назад» — про робота, а не про водителя.
         pn = st.get("prices_now") or {}
         age_min = None
         for g, v in pn.items():
@@ -110,15 +115,18 @@ def collect_availability(cfg, region=None):
                 continue
             p = v.get("p")
             age = _price_age_hours(v.get("t"), now_utc)
-            if age is not None and (age_min is None or age < age_min):
+            if (v.get("n") or 0) >= 1 and age is not None and (age_min is None or age < age_min):
                 age_min = age
-            # в медиану — только свежие и вменяемые
+            # в медиану цены — только свежие и вменяемые (импорт сети тут уместен)
             if p is not None and lo <= p <= hi and age is not None and age <= fresh_h:
                 cvals[g].append(float(p))
         if age_min is not None:
             summary["seen_any"] += 1
             if age_min <= fresh_h:
                 summary["seen_fresh"] += 1
+        # станции, сообщившие СОСТАВ топлива — знаменатель для честной доли марки
+        if fs:
+            summary["n_report"] += 1
 
         stations.append({"brand": st.get("brand"), "addr": st.get("addr"),
                          "lat": st.get("lat"), "lon": st.get("lon"),
