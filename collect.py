@@ -15,7 +15,7 @@ import statistics
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import xlrd
 
@@ -154,7 +154,10 @@ def _network_breakdown(azs, cfg, lo, hi, fresh_days, ref):
                 continue
             b = r.get("brand") or ""
             allp.append((b, p))
-            if (_age_days(r.get(f"date_{head}"), ref) or 999) <= fresh_days:
+            _a = _age_days(r.get(f"date_{head}"), ref)
+            # ВНИМАНИЕ: нельзя писать (_a or 999) — возраст 0 (цена обновлена СЕГОДНЯ) в Python
+            # falsy, и такие цены выбрасывались. Спред считался по НЕобновившимся: 0.32 ₽ вместо 23.58 ₽.
+            if _a is not None and _a <= fresh_days:
                 fresh.append((b, p))
         return fresh if len(fresh) >= 5 else allp
 
@@ -190,7 +193,9 @@ def collect_prices(cfg, region=None):
     fuels = cfg.get("price_fuels", ["АИ-95", "АИ-98"])
     lo, hi = cfg.get("price_sane_min", 20.0), cfg.get("price_sane_max", 250.0)
     fresh_days = cfg.get("fresh_days", 14)
-    ref = datetime.now(timezone.utc).date()
+    # даты цен приходят по МСК — считаем возраст тоже по МСК, иначе с 00:00 до 03:00
+    # окно свежести расширяется на сутки и метрики прыгают в полночь
+    ref = datetime.now(timezone(timedelta(hours=3))).date()
 
     xls_all = fetch_report(cfg, available_only=False, bbox=bbox)
     xls_av = fetch_report(cfg, available_only=True, bbox=bbox)
@@ -203,8 +208,30 @@ def collect_prices(cfg, region=None):
     for r in rows_all:
         r["_available"] = station_key(r) in avail_keys
 
-    azs = [r for r in rows_all if r.get("type") == "АЗС"]
+    azs_raw = [r for r in rows_all if r.get("type") == "АЗС"]
+    # дедупликация каталога: одна и та же точка встречается дважды и удваивает свой вес
+    seen_keys, azs_dedup = set(), []
+    for r in azs_raw:
+        k = station_key(r)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        azs_dedup.append(r)
+
+    # ЧИСТО ГАЗОВЫЕ станции (СПБТ/метан и ни одной цены на жидкое топливо) не должны быть
+    # в знаменателе «доля АЗС с бензином» — они и не могут его продавать. НО станции вообще
+    # без цен НЕ выбрасываем: это кандидаты в закрытые, иначе знаменатель «худеет» вместе с
+    # числителем и закрытия прячутся.
+    def _has_liquid(r):
+        return any(r.get(f"price_{f}") is not None for f in fuels)
+
+    def _has_gas(r):
+        return any(r.get(f"price_{g}") is not None for g in ("Газ СПБТ", "Метан"))
+
+    azs = [r for r in azs_dedup if _has_liquid(r) or not _has_gas(r)]
     azs_av = [r for r in azs if r["_available"]]
+    n_gas_only = len(azs_dedup) - len(azs)
+    n_dup = len(azs_raw) - len(azs_dedup)
 
     def prices(rows, fuel):
         """(все вменяемые цены, свежие цены ≤ fresh_days). Цену без даты в свежие не берём."""
@@ -232,8 +259,10 @@ def collect_prices(cfg, region=None):
         return round(statistics.median(ages), 1) if ages else None
 
     summary = {
-        "azs_total": len(azs),
+        "azs_total": len(azs),            # база: без чисто газовых и без дублей
         "azs_available": len(azs_av),
+        "azs_gas_only": n_gas_only,       # исключены из базы (не могут продавать бензин)
+        "azs_dups": n_dup,                # схлопнутые дубли каталога
         "fuels": {},
     }
     fresh_min = cfg.get("min_fresh_prices", 30)       # FRESH_MIN — порог доверия цене

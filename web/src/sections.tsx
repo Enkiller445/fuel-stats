@@ -92,7 +92,9 @@ export function Hero({ d, f }: { d: Data; f: Fuel }) {
         <div className="mt-3">
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold tnum" style={{ color: c }}>
-              {f.physShare ?? 0}–{f.availShare ?? f.physShare}%
+              {/* источники разные, порядок границ не гарантирован — показываем от меньшей к большей */}
+              {Math.min(f.physShare ?? 0, f.availShare ?? 0)}–
+              {Math.max(f.physShare ?? 0, f.availShare ?? 0)}%
             </span>
             <span className="text-sm" style={{ color: "var(--muted)" }}>АЗС с этой маркой</span>
           </div>
@@ -122,6 +124,25 @@ export function Hero({ d, f }: { d: Data; f: Fuel }) {
           </span>
         )}
       </div>
+
+      {f.spread != null && f.priceTrusted && (
+        <div
+          className="mt-2 rounded-lg px-3 py-2 text-xs leading-snug"
+          style={{
+            background: `color-mix(in srgb, ${f.spread >= 10 ? "var(--crit)" : f.spread >= 4 ? "var(--warn)" : "var(--good)"} 12%, transparent)`,
+            color: "var(--ink2)",
+          }}
+        >
+          <b style={{ color: f.spread >= 10 ? "var(--crit)" : f.spread >= 4 ? "var(--warn)" : "var(--good)" }}>
+            Независимые АЗС дороже сетей на {f.spread.toFixed(0)} ₽
+          </b>{" "}
+          {f.spread >= 10
+            ? "— так бывает, когда топлива не хватает: у кого нет оптовых поставок, задирают цену."
+            : f.spread >= 4
+              ? "— умеренный разрыв, рынок слегка напряжён."
+              : "— разрыв небольшой, с поставками порядок."}
+        </div>
+      )}
 
       <div className="mt-3 border-t pt-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
         <span>Куда идёт: </span>
@@ -338,7 +359,7 @@ export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPi
                 <div className="mt-2">
                   <span className="text-xl font-bold tnum" style={{ color: c }}>
                     {f.availShare != null || f.physShare != null
-                      ? `${f.physShare ?? 0}–${f.availShare ?? f.physShare}%`
+                      ? `${Math.min(f.physShare ?? 0, f.availShare ?? 0)}–${Math.max(f.physShare ?? 0, f.availShare ?? 0)}%`
                       : "нет данных"}
                   </span>
                 </div>

@@ -111,9 +111,10 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
         # Обе доли считаются внутри одного слоя, поэтому активность сокращается.
         if now is not None and n_report and station_ok is not None:
             phys_share = _int(_clamp(round(100 * station_ok * now / n_report), 0, 100))
-        else:                                   # старые строки истории (без n_report)
-            phys_base = gb_total or tot
-            phys_share = _int(_clamp(round(100 * now / phys_base), 0, 100)) if (now is not None and phys_base) else None
+        else:
+            # НЕ подставляем запасную формулу: она даёт другое число (34% против 63%) и делает
+            # сайт невоспроизводимым из репозитория. Нет отчётов водителей — нет нижней границы.
+            phys_share = None
         gd_share = _int(round(100 * now / gd_resp)) if (now is not None and gd_resp) else None  # физ. оценка
         r = round(now / navail, 2) if (now is not None and navail) else None
         r_norm = round(r / gd_cover, 2) if (r is not None and gd_cover) else None
