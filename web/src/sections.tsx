@@ -147,12 +147,7 @@ export function Hero({ d, f }: { d: Data; f: Fuel }) {
       <div className="mt-3 border-t pt-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
         <span>Куда идёт: </span>
         <span style={{ color: f.verdict.trendState === "down" ? "var(--crit)" : "var(--muted)" }}>{f.verdict.trendLabel}.</span>
-        {f.forecast && (
-          <span>
-            {" "}Завтра ожидаем <b style={{ color: "var(--ink2)" }}>{f.forecast.lo}–{f.forecast.hi}%</b>{" "}
-            (за сутки обычно меняется на {f.forecast.typical} п.п.).
-          </span>
-        )}
+        {f.forecast && <span> Ожидаем {f.forecast.text}.</span>}
         {d.cityPhys != null && d.cityAvail != null && (
           <span> Массовые марки (92/95/ДТ) — на ~{d.cityPhys}–{d.cityAvail}% АЗС.</span>
         )}

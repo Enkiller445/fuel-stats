@@ -177,16 +177,17 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
         fc = None
         if mon_days >= 7:
             hist_avs = [x for x in col(f"avs_{f}") if x is not None]
-            if len(hist_avs) >= 7 and avail_share is not None:
+            if len(hist_avs) >= 7:
                 jumps = [abs(hist_avs[i + 1] - hist_avs[i]) for i in range(len(hist_avs) - 1)]
                 jumps.sort()
                 typ = jumps[len(jumps) // 2]                      # медианное суточное изменение
                 band = max(2, round(jumps[int(0.9 * (len(jumps) - 1))]))   # p90 — честный коридор
-                fc = {"lo": _int(_clamp(round(avail_share - band), 0, 100)),
-                      "hi": _int(_clamp(round(avail_share + band), 0, 100)),
-                      "typical": round(typ, 1), "band": _int(band),
-                      "text": f"Завтра ожидаем примерно как сегодня: {avail_share - band}–{avail_share + band}%. "
-                              f"За сутки обычно меняется на {typ:.1f} п.п."}
+                # ВАЖНО: прогноз относится к ТОМУ ЖЕ числу, что показано главным (к диапазону
+                # целиком), а не к одной верхней границе — иначе рядом с «32–76%» появлялось
+                # «завтра 72–80%», и это читалось как обещание роста.
+                fc = {"typical": round(typ, 1), "band": _int(band),
+                      "text": f"завтра примерно то же — за сутки обычно меняется на {typ:.1f} п.п. "
+                              f"(редко больше {band})"}
 
         s = bd._fuel_summary(f, hist, drows, cfg)
         fuels[f] = {

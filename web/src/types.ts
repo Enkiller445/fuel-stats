@@ -19,10 +19,8 @@ export interface WhenProfile {
 }
 
 export interface Forecast {
-  lo: Num;
-  hi: Num;
   typical: Num; // медианное изменение за сутки, п.п.
-  band: Num;
+  band: Num; // p90 суточных изменений — честный коридор
   text: string;
 }
 
