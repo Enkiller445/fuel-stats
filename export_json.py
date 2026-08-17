@@ -44,9 +44,13 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
         r["work_pp"], r["gd_bal"] = pp, gd
         # availShare по каждой марке (для честного тренда: navail / полная база)
         tot_r = analytics._val(r, "azs_total")
+        gbt_r = analytics._val(r, "gb_total")
         for f in FUELS:
             nv = analytics._val(r, f"p_navail_{f}")
             r[f"avs_{f}"] = round(100 * nv / tot_r, 1) if (nv is not None and tot_r) else None
+            # доля станций gdebenz, подтвердивших марку (для графика «подтверждено» по марке)
+            nw = analytics._val(r, f"gb_now_{G[f]}")
+            r[f"gbs_{G[f]}"] = round(100 * nw / gbt_r, 1) if (nw is not None and gbt_r) else None
 
     days, drows = analytics.daily_sample(hist, cfg.get("daily_sample_hour", 20))
     dlabels = [d.strftime("%d.%m") for d in days]
@@ -221,7 +225,12 @@ def build_payload(base_dir, price_stations=None, gd_stations=None, region=None, 
                 "now": col(f"gb_now_{g}"),
                 "spread": col(f"net_spread_{f}"),
                 "net": col(f"net_net_{f}"), "indep": col(f"net_indep_{f}"),
+                # ряды ПО МАРКЕ для переключаемых графиков доступности
+                "avail": col(f"avs_{f}"),          # % всех АЗС, где марка в прайсе и станция работает
+                "confirm": col(f"gbs_{g}"),        # % станций gdebenz, подтвердивших марку
             },
+            # срез «фокус региона» именно по этой марке (внутри МКАД / Конаковский р-н)
+            "geo": _focus_split(gd_stations, region.get("focus"), grade=g),
         }
 
     # «Октановый абсурд» TOL 0.10 ₽ -> priceSuspect; затем priceTrusted (что показывать)
@@ -490,9 +499,10 @@ def _brands_price(stations, tot):
     return petrol + none
 
 
-def _focus_split(stations, focus):
+def _focus_split(stations, focus, grade=None):
     """Срез «фокус региона ↔ остальное» по координатам gdebenz.
-    Для Москвы фокус = внутри МКАД, для Тверской = Конаковский район."""
+    Для Москвы фокус = внутри МКАД, для Тверской = Конаковский район.
+    Если задан grade — считаем не «станция отпускает», а «на станции есть ЭТА марка»."""
     if not stations or not focus:
         return None
     acc = {"in": {"resp": 0, "yes": 0}, "out": {"resp": 0, "yes": 0}}
@@ -500,6 +510,11 @@ def _focus_split(stations, focus):
         stt = s.get("status")
         if stt not in ("yes", "no", "queue", "low"):
             continue
+        if grade is not None:
+            fs = {x.strip() for x in (s.get("fuels_now") or "").split(",") if x.strip()}
+            has_fuel = grade in fs          # именно ЭТА марка отмечена на станции
+        else:
+            has_fuel = stt in ("yes", "queue", "low")   # станция отпускает хоть что-то
         inf = s.get("focus")
         if inf is None:
             inf = geo.in_focus(s.get("lat"), s.get("lon"), focus)
@@ -507,7 +522,7 @@ def _focus_split(stations, focus):
             continue
         side = "in" if inf else "out"
         acc[side]["resp"] += 1
-        if stt in ("yes", "queue", "low"):  # «есть» (в т.ч. с трудом)
+        if has_fuel:
             acc[side]["yes"] += 1
 
     def pack(d):

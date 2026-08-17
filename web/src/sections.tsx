@@ -386,32 +386,59 @@ export function Charts({ d, f }: { d: Data; f: Fuel }) {
 
       <SectionTitle
         help={
-          <Help title="Две честные метрики доступности">
-            «Работающих АЗС %» — по полной базе petrolplus, честная доступность. «Баланс сообщений» — по краудсорсу
-            gdebenz, оценка снизу (про пустые пишут чаще), не доступность.
+          <Help title="Две границы, обе по выбранной марке">
+            Верхняя (petrolplus): марка есть в прайсе И станция работает — потолок, прайс не знает, залито ли в бак.
+            Нижняя (gdebenz): марку подтвердили водители — оценка снизу, отмечаются не все. Правда между ними.
+            Пунктиром — общая доступность станций (любое топливо), для сравнения.
           </Help>
         }
       >
-        Доступность (все марки)
+        Доступность {grade} · динамика
       </SectionTitle>
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
-          <Capt help={<Help title="Работающих АЗС, %"><Verdict>{V.vWork(d.overall)}</Verdict></Help>}>
-            Работающих АЗС, % · petrolplus
+          <Capt help={<Help title="Верхняя граница"><Verdict>{V.vWork(d.overall)}</Verdict></Help>}>
+            {grade}: в прайсе и станция работает, % · petrolplus
           </Capt>
-          <LineTrend labels={d.days} unit="%" domain={[0, 100]} series={[{ key: "w", name: "Работают", vals: d.series.workPp, color: "var(--good)" }]} />
+          <LineTrend
+            labels={d.days}
+            unit="%"
+            domain={[0, 100]}
+            series={[
+              { key: "f", name: grade, vals: f.series.avail, color: c },
+              { key: "w", name: "любое топливо", vals: d.series.workPp, color: "var(--muted)", dashed: true },
+            ]}
+          />
         </Card>
         <Card>
-          <Capt help={<Help title="Баланс сообщений «есть», %"><Verdict>{V.vGdBal(d.overall)}</Verdict></Help>}>
-            Баланс сообщений «есть», % · gdebenz (оценка снизу)
+          <Capt help={<Help title="Нижняя граница"><Verdict>{V.vGdBal(d.overall)}</Verdict></Help>}>
+            {grade}: подтвердили водители, % станций · gdebenz
           </Capt>
-          <LineTrend labels={d.days} unit="%" domain={[0, 100]} series={[{ key: "g", name: "«Есть»", vals: d.series.gdBal, color: "var(--muted)", dashed: true }]} />
+          <LineTrend
+            labels={d.days}
+            unit="%"
+            domain={[0, 100]}
+            series={[
+              { key: "cf", name: grade, vals: f.series.confirm, color: c },
+              { key: "g", name: "станция отпускает", vals: d.series.gdBal, color: "var(--muted)", dashed: true },
+            ]}
+          />
         </Card>
       </div>
 
-      <GeoCard d={d} />
+      <GeoCard d={d} f={f} />
 
-      <SectionTitle>Сообщения gdebenz по статусам</SectionTitle>
+      <SectionTitle
+        help={
+          <Help title="Почему это НЕ по маркам">
+            «Очередь» и «мало» — свойство станции целиком, а не конкретной марки: водитель отмечает статус
+            заправки, а не то, что очередь именно за 95-м. Поэтому этот блок остаётся общим — разбить его
+            по маркам было бы выдумкой.
+          </Help>
+        }
+      >
+        Сообщения gdebenz по статусам · по станциям, не по маркам
+      </SectionTitle>
       <Card>
         <StatusStack labels={d.days} yes={d.series.status.yes} queue={d.series.status.queue} low={d.series.status.low} no={d.series.status.no} />
       </Card>
@@ -480,8 +507,11 @@ function WhenToRefuel({ w, title, unit }: { w: WhenProfile | null; title: string
   );
 }
 
-function GeoCard({ d }: { d: Data }) {
-  const g = d.geo;
+function GeoCard({ d, f }: { d: Data; f: Fuel }) {
+  // срез по ВЫБРАННОЙ марке; если по ней данных нет — общий станционный
+  const g = f.geo ?? d.geo;
+  const perFuel = !!f.geo;
+  const grade = f.grade === "ДТ" ? "ДТ" : "АИ-" + f.grade;
   if (!g || (!g.in.resp && !g.out.resp)) return null;
   const rows = [
     { label: d.focusName || "Внутри МКАД", s: g.in },
@@ -493,7 +523,9 @@ function GeoCard({ d }: { d: Data }) {
       <SectionTitle
         help={
           <Help title="Москва ↔ область">
-            Доля АЗС с сообщением «есть» (вкл. очередь/лимит) отдельно внутри МКАД и за ним — по координатам gdebenz.
+            {perFuel
+              ? `Доля АЗС, где водители отметили именно ${grade}, отдельно в двух зонах — по координатам gdebenz.`
+              : "Доля АЗС с сообщением «есть» (вкл. очередь/лимит) отдельно внутри МКАД и за ним — по координатам gdebenz."}
             {diff != null && (
               <Verdict>
                 {Math.abs(diff) < 4
@@ -506,7 +538,8 @@ function GeoCard({ d }: { d: Data }) {
           </Help>
         }
       >
-        Наличие: {(d.focusName || "город").toLowerCase()} ↔ {(d.focusOther || "область").toLowerCase()}
+        {perFuel ? `${grade}: ` : "Наличие: "}
+        {(d.focusName || "город").toLowerCase()} ↔ {(d.focusOther || "область").toLowerCase()}
       </SectionTitle>
       <Card>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -520,7 +553,7 @@ function GeoCard({ d }: { d: Data }) {
                 <div className="h-full rounded-full" style={{ width: `${r.s.pct ?? 0}%`, background: "var(--good)" }} />
               </div>
               <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                {r.s.yes} «есть» из {r.s.resp} ответивших
+                {r.s.yes} {perFuel ? `с ${grade}` : "«есть»"} из {r.s.resp} ответивших
               </div>
             </div>
           ))}

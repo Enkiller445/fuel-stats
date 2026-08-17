@@ -48,6 +48,8 @@ export interface FuelSeries {
   spread: Num[];
   net: Num[];
   indep: Num[];
+  avail: Num[]; // % всех АЗС: марка в прайсе и станция работает
+  confirm: Num[]; // % станций gdebenz, подтвердивших марку
 }
 
 export interface Fuel {
@@ -86,6 +88,7 @@ export interface Fuel {
   spread_d7: Num;
   summary: Summary;
   series: FuelSeries;
+  geo: Geo | null; // срез «фокус ↔ остальное» именно по этой марке
 }
 
 export interface Overall {
