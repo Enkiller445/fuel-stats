@@ -57,6 +57,43 @@ export interface Series {
   vals: Num[];
   color: string;
   dashed?: boolean;
+  width?: number; // толще — выбранная марка, тоньше — остальные
+  faded?: boolean; // приглушить невыбранные, чтобы не рябило
+}
+
+/** Легенда: какая линия какая. Кликабельные подписи ведут себя как переключатель марки. */
+export function Legend({
+  series,
+  onPick,
+}: {
+  series: Series[];
+  onPick?: (name: string) => void;
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      {series.map((s) => (
+        <button
+          key={s.key}
+          onClick={onPick ? () => onPick(s.name) : undefined}
+          className="flex items-center gap-1.5 text-xs"
+          style={{ opacity: s.faded ? 0.55 : 1, cursor: onPick ? "pointer" : "default" }}
+        >
+          <span
+            className="inline-block rounded-full"
+            style={{
+              width: 14,
+              height: s.width && s.width > 2 ? 3 : 2,
+              background: s.color,
+              opacity: s.dashed ? 0.7 : 1,
+            }}
+          />
+          <span style={{ color: s.faded ? "var(--muted)" : "var(--ink2)", fontWeight: s.width && s.width > 2 ? 600 : 400 }}>
+            {s.name}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function LineTrend({
@@ -106,7 +143,8 @@ export function LineTrend({
             type="monotone"
             dataKey={s.key}
             stroke={s.color}
-            strokeWidth={2.25}
+            strokeWidth={s.width ?? 2.25}
+            strokeOpacity={s.faded ? 0.45 : 1}
             strokeDasharray={s.dashed ? "5 4" : undefined}
             dot={false}
             activeDot={{ r: 3.5, strokeWidth: 0 }}

@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import type { Data, Fuel, WhenProfile } from "./types";
+import type { Data, Fuel, Num, WhenProfile } from "./types";
 import { rub, pct, int, fuelVar, LEVEL_LABEL, clsx, plural, ageText, trafficColor } from "./lib";
 import { Card, Chip, Plaque, Delta, Help, Verdict, Sparkline, SectionTitle } from "./ui";
-import { LineTrend, StatusStack, Bars, SpreadChart } from "./charts";
+import { LineTrend, StatusStack, Bars, SpreadChart, Legend } from "./charts";
 import * as V from "./verdicts";
 
 // ---------------------------------------------------------------- Header
@@ -374,14 +374,41 @@ export function FuelCards({ d, active, onPick }: { d: Data; active: string; onPi
 }
 
 // ------------------------------------------------------------------- Charts
-export function Charts({ d, f }: { d: Data; f: Fuel }) {
+export function Charts({ d, f, onPickFuel }: { d: Data; f: Fuel; onPickFuel?: (n: string) => void }) {
   const c = fuelVar(f.color);
   const grade = f.grade === "ДТ" ? "ДТ" : "АИ-" + f.grade;
+
+  // все марки на одном графике: выбранная — жирная, остальные тонкие и приглушённые
+  const fuelSeries = (pick: (x: Fuel) => Num[]) =>
+    d.fuels.map((name) => {
+      const fu = d.byFuel[name];
+      const on = name === (f.grade === "ДТ" ? "ДТ" : "АИ-" + f.grade);
+      return {
+        key: name,
+        name,
+        vals: pick(fu),
+        color: fuelVar(fu.color),
+        width: on ? 3 : 1.6,
+        faded: !on,
+      };
+    });
+
+  const availSeries = [
+    ...fuelSeries((x) => x.series.avail),
+    { key: "_all", name: "любое топливо", vals: d.series.workPp, color: "var(--muted)", dashed: true, width: 1.6, faded: true },
+  ];
+  const confirmSeries = [
+    ...fuelSeries((x) => x.series.confirm),
+    { key: "_all", name: "станция отпускает", vals: d.series.gdBal, color: "var(--muted)", dashed: true, width: 1.6, faded: true },
+  ];
+  const priceSeries = fuelSeries((x) => x.series.price);
+
   return (
     <>
-      <SectionTitle help={<Help title="Цена — медиана">{V.vPrice(f)}</Help>}>Цена {grade}</SectionTitle>
+      <SectionTitle help={<Help title="Цена — медиана свежих цен">{V.vPrice(f)}</Help>}>Цены по маркам</SectionTitle>
       <Card>
-        <LineTrend labels={d.days} unit=" ₽" series={[{ key: "p", name: grade, vals: f.series.price, color: c }]} />
+        <LineTrend labels={d.days} unit=" ₽" series={priceSeries} />
+        <Legend series={priceSeries} onPick={onPickFuel} />
       </Card>
 
       <SectionTitle
@@ -398,31 +425,17 @@ export function Charts({ d, f }: { d: Data; f: Fuel }) {
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <Capt help={<Help title="Верхняя граница"><Verdict>{V.vWork(d.overall)}</Verdict></Help>}>
-            {grade}: в прайсе и станция работает, % · petrolplus
+            В прайсе и станция работает, % · petrolplus
           </Capt>
-          <LineTrend
-            labels={d.days}
-            unit="%"
-            domain={[0, 100]}
-            series={[
-              { key: "f", name: grade, vals: f.series.avail, color: c },
-              { key: "w", name: "любое топливо", vals: d.series.workPp, color: "var(--muted)", dashed: true },
-            ]}
-          />
+          <LineTrend labels={d.days} unit="%" domain={[0, 100]} series={availSeries} />
+          <Legend series={availSeries} onPick={onPickFuel} />
         </Card>
         <Card>
           <Capt help={<Help title="Нижняя граница"><Verdict>{V.vGdBal(d.overall)}</Verdict></Help>}>
-            {grade}: подтвердили водители, % станций · gdebenz
+            Подтвердили водители, % станций · gdebenz
           </Capt>
-          <LineTrend
-            labels={d.days}
-            unit="%"
-            domain={[0, 100]}
-            series={[
-              { key: "cf", name: grade, vals: f.series.confirm, color: c },
-              { key: "g", name: "станция отпускает", vals: d.series.gdBal, color: "var(--muted)", dashed: true },
-            ]}
-          />
+          <LineTrend labels={d.days} unit="%" domain={[0, 100]} series={confirmSeries} />
+          <Legend series={confirmSeries} onPick={onPickFuel} />
         </Card>
       </div>
 

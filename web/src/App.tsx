@@ -105,7 +105,7 @@ function Dashboard({ data, fuel, setFuel }: { data: Data; fuel: string; setFuel:
           Подробности и графики (цены, тренды, бренды, гео)
         </summary>
         <div className="mt-2">
-          <Charts d={data} f={f} />
+          <Charts d={data} f={f} onPickFuel={setFuel} />
           <BrandTables d={data} />
         </div>
       </details>
